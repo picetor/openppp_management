@@ -190,7 +190,7 @@ func (s *Server) nodeAuthenticated(next http.Handler) http.Handler {
 				writeError(w, http.StatusUnauthorized, "invalid communication key")
 				return
 			}
-			if err := s.db.Where("key = ?", nodeID).First(&node).Error; err != nil {
+			if err := s.db.Where("`key` = ?", nodeID).First(&node).Error; err != nil {
 				writeError(w, http.StatusUnauthorized, "invalid node ID")
 				return
 			}
@@ -423,7 +423,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 			groupIDs = *input.GroupIDs
 		} else {
 			var group model.PermissionGroup
-			if err := tx.Where("key = ?", "default").First(&group).Error; err != nil {
+			if err := tx.Where("`key` = ?", "default").First(&group).Error; err != nil {
 				return err
 			}
 			groupIDs = []uint64{group.ID}
@@ -959,7 +959,7 @@ func (s *Server) createNode(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		var group model.PermissionGroup
-		if err := tx.Where("key = ?", "default").First(&group).Error; err != nil {
+		if err := tx.Where("`key` = ?", "default").First(&group).Error; err != nil {
 			return err
 		}
 		return tx.Create(&model.NodePermissionGroup{NodeID: node.ID, GroupID: group.ID}).Error
@@ -1200,7 +1200,7 @@ func (s *Server) subscriptionNodeConfig(w http.ResponseWriter, r *http.Request) 
 	}
 	var node model.Node
 	err := availableNodesQuery(s.db, device.UserID).
-		Where("nodes.key = ?", chi.URLParam(r, "nodeKey")).
+		Where("`nodes`.`key` = ?", chi.URLParam(r, "nodeKey")).
 		Distinct("nodes.*").First(&node).Error
 	if err != nil {
 		writeError(w, http.StatusNotFound, "node not available in this subscription")
@@ -1494,7 +1494,7 @@ func (s *Server) newSubscriptionToken(deviceID uint64, name string) (*model.Subs
 
 func (s *Server) communicationKey() (string, error) {
 	var setting model.SystemSetting
-	err := s.db.First(&setting, "key = ?", communicationKeySetting).Error
+	err := s.db.First(&setting, "`key` = ?", communicationKeySetting).Error
 	if err == nil {
 		return setting.Value, nil
 	}
@@ -1512,7 +1512,7 @@ func (s *Server) communicationKey() (string, error) {
 	}
 	setting = model.SystemSetting{Key: communicationKeySetting, Value: value}
 	if err := s.db.Create(&setting).Error; err != nil {
-		if lookupErr := s.db.First(&setting, "key = ?", communicationKeySetting).Error; lookupErr == nil {
+		if lookupErr := s.db.First(&setting, "`key` = ?", communicationKeySetting).Error; lookupErr == nil {
 			return setting.Value, nil
 		}
 		return "", err
@@ -1522,7 +1522,7 @@ func (s *Server) communicationKey() (string, error) {
 
 func (s *Server) publicURL() string {
 	var setting model.SystemSetting
-	if err := s.db.First(&setting, "key = ?", publicURLSetting).Error; err == nil {
+	if err := s.db.First(&setting, "`key` = ?", publicURLSetting).Error; err == nil {
 		if value := strings.TrimRight(strings.TrimSpace(setting.Value), "/"); value != "" {
 			return value
 		}

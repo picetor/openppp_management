@@ -49,7 +49,7 @@ func Migrate(db *gorm.DB) error {
 
 func EnsurePermissionDefaults(db *gorm.DB) error {
 	var group model.PermissionGroup
-	result := db.Where("key = ?", "default").First(&group)
+	result := db.Where("`key` = ?", "default").First(&group)
 	if result.Error == nil {
 		return nil
 	}
