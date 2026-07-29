@@ -478,13 +478,27 @@ function nodePresence(node: Node) {
   return { tone: 'red', label: '离线', detail: formatAge(age) }
 }
 
+let presenceRefreshing = false
+async function refreshNodePresence() {
+  heartbeatNow.value = Date.now()
+  if (!me.value || presenceRefreshing) return
+  presenceRefreshing = true
+  try {
+    nodes.value = await api<Node[]>('/api/v1/nodes')
+  } catch {
+    // Keep the last known state when a transient refresh fails.
+  } finally {
+    presenceRefreshing = false
+  }
+}
+
 onMounted(() => {
   if (window.location.hash !== `#/${active.value}`) {
     window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#/${active.value}`)
   }
   window.addEventListener('hashchange', syncSectionFromHash)
   systemDarkMode.addEventListener('change', handleSystemThemeChange)
-  heartbeatTimer = window.setInterval(() => { heartbeatNow.value = Date.now() }, 10_000)
+  heartbeatTimer = window.setInterval(refreshNodePresence, 10_000)
   bootstrap()
 })
 onUnmounted(() => {
