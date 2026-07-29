@@ -85,6 +85,7 @@ type Node struct {
 	ConfigJSON          string     `gorm:"type:text;not null" json:"configJson"`
 	PolicyRevision      uint64     `gorm:"not null;default:1" json:"policyRevision"`
 	LastSeenAt          *time.Time `json:"lastSeenAt"`
+	LastIP              string     `gorm:"size:64" json:"lastIp"`
 	CreatedAt           time.Time  `json:"createdAt"`
 	UpdatedAt           time.Time  `json:"updatedAt"`
 }

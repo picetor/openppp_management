@@ -33,6 +33,7 @@ export type Node = {
   whitelistGuidCount: number
   configReady: boolean
   lastSeenAt?: string
+  lastIp?: string
 }
 
 export type PermissionGroup = {

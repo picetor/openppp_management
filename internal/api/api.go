@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -1436,6 +1437,9 @@ func (s *Server) nodeHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	updates := map[string]any{"last_seen_at": now}
+	if address := requestClientIP(r); address != "" {
+		updates["last_ip"] = address
+	}
 	configUpdated := false
 	rawConfig := input.Config
 	if input.ConfigText != "" {
@@ -1462,6 +1466,22 @@ func (s *Server) nodeHeartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"serverTime": now, "policyRevision": node.PolicyRevision, "configUpdated": configUpdated,
 	})
+}
+
+func requestClientIP(r *http.Request) string {
+	if address := net.ParseIP(strings.TrimSpace(r.Header.Get("CF-Connecting-IP"))); address != nil {
+		return address.String()
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil {
+		if address := net.ParseIP(host); address != nil {
+			return address.String()
+		}
+	}
+	if address := net.ParseIP(strings.TrimSpace(r.RemoteAddr)); address != nil {
+		return address.String()
+	}
+	return ""
 }
 
 func (s *Server) nodeSessions(w http.ResponseWriter, r *http.Request) {

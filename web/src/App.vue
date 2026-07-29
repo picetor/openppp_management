@@ -663,6 +663,9 @@ onUnmounted(() => {
                 </small>
               </template>
             </el-table-column>
+            <el-table-column label="节点公网 IP" min-width="155">
+              <template #default="{ row }"><code>{{ row.lastIp || '等待心跳' }}</code></template>
+            </el-table-column>
             <el-table-column label="权限组" min-width="180">
               <template #default="{ row }">
                 <div class="tag-list">

@@ -190,10 +190,18 @@ func TestSubscriptionAndNodePolicyFlow(t *testing.T) {
 	heartbeatRequest.Header.Set("Content-Type", "application/json")
 	heartbeatRequest.Header.Set("Authorization", "Bearer "+communicationKey)
 	heartbeatRequest.Header.Set("X-OpenPPP2-Node-ID", nodeResult.Key)
+	heartbeatRequest.Header.Set("CF-Connecting-IP", "203.0.113.25")
 	heartbeat := httptest.NewRecorder()
 	handler.ServeHTTP(heartbeat, heartbeatRequest)
 	if heartbeat.Code != http.StatusOK {
 		t.Fatalf("node heartbeat failed: %d %s", heartbeat.Code, heartbeat.Body.String())
+	}
+	var heartbeatNode model.Node
+	if err := db.First(&heartbeatNode, nodeResult.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if heartbeatNode.LastIP != "203.0.113.25" {
+		t.Fatalf("unexpected heartbeat IP: %q", heartbeatNode.LastIP)
 	}
 	if err := db.First(&nodeResult, nodeResult.ID).Error; err != nil {
 		t.Fatal(err)
