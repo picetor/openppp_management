@@ -1,0 +1,14 @@
+.env
+.idea/
+.vscode/
+.go/
+.npm-cache/
+.toolchains/
+.deploy/
+data/
+mysql/
+web/node_modules/
+web/dist/
+*.log
+*.exe
+openppp2-management

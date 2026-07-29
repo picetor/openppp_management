@@ -1,0 +1,25 @@
+{
+  "name": "openppp2-management-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit -p tsconfig.app.json && vite build",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.app.json"
+  },
+  "dependencies": {
+    "element-plus": "^2.9.7",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@types/node": "^24.10.0",
+    "typescript": "~5.9.3",
+    "vite": "^8.1.5",
+    "vue-tsc": "^3.3.8"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.8"
+  }
+}

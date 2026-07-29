@@ -1,0 +1,6 @@
+.git
+.env
+data
+mysql
+web/node_modules
+*.log

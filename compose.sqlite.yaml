@@ -1,0 +1,17 @@
+services:
+  management:
+    build: .
+    image: openppp2-management:local
+    restart: unless-stopped
+    environment:
+      OPENPPP2_LISTEN: 0.0.0.0:8080
+      OPENPPP2_PUBLIC_URL: ${OPENPPP2_PUBLIC_URL:-http://localhost:8080}
+      OPENPPP2_ADMIN_USERNAME: ${OPENPPP2_ADMIN_USERNAME:-admin}
+      OPENPPP2_ADMIN_PASSWORD: ${OPENPPP2_ADMIN_PASSWORD:?set OPENPPP2_ADMIN_PASSWORD}
+      OPENPPP2_COMMUNICATION_KEY: ${OPENPPP2_COMMUNICATION_KEY:-}
+      OPENPPP2_DATABASE_DRIVER: sqlite
+      OPENPPP2_DATABASE_PATH: /app/data/management.db
+    ports:
+      - "${OPENPPP2_BIND_ADDRESS:-127.0.0.1:8080}:8080"
+    volumes:
+      - ./data:/app/data
