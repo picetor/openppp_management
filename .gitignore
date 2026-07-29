@@ -1,4 +1,5 @@
 .env
+compose.mysql-external.yaml
 .idea/
 .vscode/
 .go/

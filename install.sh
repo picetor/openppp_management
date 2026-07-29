@@ -81,6 +81,7 @@ database_path=/app/data/management.db
 compose_profile=
 mysql_password=
 mysql_root_password=
+mysql_container_network=
 
 case "$database_choice" in
     1)
@@ -98,6 +99,24 @@ case "$database_choice" in
         fi
         if [ "$mysql_host" = "127.0.0.1" ] || [ "$mysql_host" = "localhost" ]; then
             mysql_host=host.docker.internal
+        elif docker inspect --type container "$mysql_host" >/dev/null 2>&1; then
+            mysql_container_network=$(
+                docker inspect "$mysql_host" \
+                    --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' |
+                    while IFS= read -r network_name; do
+                        case "$network_name" in
+                            ""|bridge|host|none) ;;
+                            *) printf '%s\n' "$network_name"; break ;;
+                        esac
+                    done
+            )
+            if [ -z "$mysql_container_network" ]; then
+                mysql_container_network=openppp_management_database
+                docker network inspect "$mysql_container_network" >/dev/null 2>&1 ||
+                    docker network create "$mysql_container_network" >/dev/null
+                docker network connect "$mysql_container_network" "$mysql_host" 2>/dev/null || true
+            fi
+            echo "Using Docker network: $mysql_container_network"
         fi
         database_dsn="$mysql_username:$mysql_password@tcp($mysql_host:$mysql_port)/$mysql_database?charset=utf8mb4&parseTime=true&loc=UTC"
         ;;
@@ -150,10 +169,34 @@ umask 077
 
 mkdir -p "$INSTALL_DIR/data"
 cd "$INSTALL_DIR"
+if [ -n "$mysql_container_network" ]; then
+    case "$mysql_container_network" in
+        *[!A-Za-z0-9_.-]*)
+            echo "Unsupported Docker network name: $mysql_container_network" >&2
+            exit 1
+            ;;
+    esac
+    {
+        printf 'services:\n'
+        printf '  management:\n'
+        printf '    networks:\n'
+        printf '      - default\n'
+        printf '      - mysql_external\n'
+        printf 'networks:\n'
+        printf '  mysql_external:\n'
+        printf '    external: true\n'
+        printf '    name: %s\n' "$mysql_container_network"
+    } >compose.mysql-external.yaml
+else
+    rm -f compose.mysql-external.yaml
+fi
+
 if [ "$database_driver" = "sqlite" ]; then
     docker compose -f compose.sqlite.yaml up -d --build
 elif [ "$compose_profile" = "mysql" ]; then
     docker compose --profile mysql up -d --build
+elif [ -n "$mysql_container_network" ]; then
+    docker compose -f compose.yaml -f compose.mysql-external.yaml up -d --build management
 else
     docker compose up -d --build management
 fi
