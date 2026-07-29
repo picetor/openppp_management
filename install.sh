@@ -7,7 +7,7 @@ INSTALL_DIR=${OPENPPP_MANAGEMENT_DIR:-/opt/openppp_management}
 prompt() {
     label=$1
     default_value=$2
-    printf '%s [%s]: ' "$label" "$default_value"
+    printf '%s [%s]: ' "$label" "$default_value" >&2
     IFS= read -r answer
     if [ -n "$answer" ]; then
         printf '%s' "$answer"
@@ -19,14 +19,14 @@ prompt() {
 prompt_secret() {
     label=$1
     default_value=$2
-    printf '%s' "$label"
+    printf '%s' "$label" >&2
     if [ -t 0 ]; then
         stty -echo
     fi
     IFS= read -r answer
     if [ -t 0 ]; then
         stty echo
-        printf '\n'
+        printf '\n' >&2
     fi
     if [ -n "$answer" ]; then
         printf '%s' "$answer"
