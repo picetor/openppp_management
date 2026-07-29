@@ -318,6 +318,28 @@ func TestSubscriptionAndNodePolicyFlow(t *testing.T) {
 		newSubscriptionToken(memberDevice.ID, "Member subscription"); err != nil {
 		t.Fatal(err)
 	}
+	disableUser := performJSONWithCookie(t, handler, http.MethodPatch,
+		"/api/v1/users/"+uintString(member.ID), map[string]any{"enabled": false}, cookie)
+	if disableUser.Code != http.StatusOK {
+		t.Fatalf("disable user failed: %d %s", disableUser.Code, disableUser.Body.String())
+	}
+	disabledPolicyRequest := httptest.NewRequest(http.MethodGet, "/api/v1/node/policy", nil)
+	disabledPolicyRequest.Header.Set("Authorization", "Bearer "+communicationKey)
+	disabledPolicyRequest.Header.Set("X-OpenPPP2-Node-ID", nodeResult.Key)
+	disabledPolicy := httptest.NewRecorder()
+	handler.ServeHTTP(disabledPolicy, disabledPolicyRequest)
+	var disabledPolicyDocument struct {
+		Blacklist []string `json:"blacklist"`
+	}
+	decodeRecorder(t, disabledPolicy, &disabledPolicyDocument)
+	if !containsString(disabledPolicyDocument.Blacklist, memberDevice.GUID) {
+		t.Fatalf("disabled user GUID missing from blacklist policy: %+v", disabledPolicyDocument)
+	}
+	enableUser := performJSONWithCookie(t, handler, http.MethodPatch,
+		"/api/v1/users/"+uintString(member.ID), map[string]any{"enabled": true}, cookie)
+	if enableUser.Code != http.StatusOK {
+		t.Fatalf("enable user failed: %d %s", enableUser.Code, enableUser.Body.String())
+	}
 	deleteUser := performJSONWithCookie(t, handler, http.MethodDelete,
 		"/api/v1/users/"+uintString(member.ID), nil, cookie)
 	if deleteUser.Code != http.StatusNoContent {

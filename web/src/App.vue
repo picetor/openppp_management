@@ -190,6 +190,25 @@ async function assignUserGroups(user: User, groupIds: number[]) {
   }
 }
 
+async function toggleUser(user: User) {
+  try {
+    const action = user.enabled ? '封禁' : '启用'
+    await ElMessageBox.confirm(
+      `确定${action}用户“${user.displayName}”吗？${user.enabled ? '该用户的设备 GUID 将从白名单移除，并加入所属黑名单节点的拒绝列表。' : ''}`,
+      `${action}用户`,
+      { type: 'warning', confirmButtonText: action, cancelButtonText: '取消' },
+    )
+    await api(`/api/v1/users/${user.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled: !user.enabled }),
+    })
+    await loadAll()
+    ElMessage.success(`用户已${action}`)
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'cancel') ElMessage.error(error.message)
+  }
+}
+
 async function deleteUser(user: User) {
   try {
     await ElMessageBox.confirm(
@@ -759,8 +778,11 @@ onUnmounted(() => {
               </template>
             </el-table-column>
             <el-table-column label="状态"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '禁用' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="100" fixed="right">
-              <template #default="{ row }"><el-button text type="danger" :disabled="row.id === me?.id" @click="deleteUser(row)">删除</el-button></template>
+            <el-table-column label="操作" width="170" fixed="right">
+              <template #default="{ row }">
+                <el-button text :type="row.enabled ? 'warning' : 'success'" :disabled="row.id === me?.id" @click="toggleUser(row)">{{ row.enabled ? '封禁' : '启用' }}</el-button>
+                <el-button text type="danger" :disabled="row.id === me?.id" @click="deleteUser(row)">删除</el-button>
+              </template>
             </el-table-column>
           </el-table>
         </div>

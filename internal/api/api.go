@@ -66,6 +66,7 @@ func New(db *gorm.DB, cfg config.Config) http.Handler {
 			r.Get("/dashboard", server.dashboard)
 			r.Get("/users", server.users)
 			r.Post("/users", server.adminOnly(server.createUser))
+			r.Patch("/users/{userID}", server.adminOnly(server.updateUser))
 			r.Put("/users/{userID}/permission-groups", server.adminOnly(server.updateUserPermissionGroups))
 			r.Delete("/users/{userID}", server.adminOnly(server.deleteUser))
 			r.Get("/settings/communication", server.adminOnly(server.communicationSettings))
@@ -434,6 +435,50 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, user)
+}
+
+func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
+	userID, ok := pathID(w, r, "userID")
+	if !ok {
+		return
+	}
+	var user model.User
+	if err := s.db.First(&user, userID).Error; err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	var input struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if input.Enabled == nil {
+		writeError(w, http.StatusBadRequest, "enabled is required")
+		return
+	}
+	if currentUser(r).ID == user.ID && !*input.Enabled {
+		writeError(w, http.StatusConflict, "cannot disable the current signed-in user")
+		return
+	}
+	if user.Role == "admin" && !*input.Enabled {
+		var enabledAdminCount int64
+		s.db.Model(&model.User{}).Where("role = ? AND enabled = ?", "admin", true).Count(&enabledAdminCount)
+		if enabledAdminCount <= 1 {
+			writeError(w, http.StatusConflict, "the last enabled administrator cannot be disabled")
+			return
+		}
+	}
+	if user.Enabled != *input.Enabled {
+		if err := s.db.Model(&user).Update("enabled", *input.Enabled).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "unable to update user")
+			return
+		}
+		user.Enabled = *input.Enabled
+		s.db.Where("user_id = ?", user.ID).Delete(&model.Session{})
+		s.bumpAllGroupPolicies()
+	}
+	writeJSON(w, http.StatusOK, userItem{User: user, GroupIDs: userPermissionGroupIDs(s.db, user.ID)})
 }
 
 func (s *Server) updateUserPermissionGroups(w http.ResponseWriter, r *http.Request) {
@@ -1360,6 +1405,11 @@ func (s *Server) nodePolicy(w http.ResponseWriter, r *http.Request) {
 			whitelist = append(whitelist, rule.GUID)
 		}
 	}
+	var disabledDevices []model.Device
+	disabledDevicesQuery(s.db).Distinct("devices.*").Find(&disabledDevices)
+	for _, device := range disabledDevices {
+		blacklist = append(blacklist, device.GUID)
+	}
 	if node.AccessMode == "whitelist" {
 		var devices []model.Device
 		whitelistDevicesQuery(s.db, node.ID).Distinct("devices.*").Find(&devices)
@@ -1370,7 +1420,7 @@ func (s *Server) nodePolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"schema": "openppp2-node-policy", "version": 1, "revision": node.PolicyRevision,
 		"nodeId": node.Key, "enabled": node.Enabled, "accessMode": node.AccessMode,
-		"duplicateGuidPolicy": node.DuplicateGUIDPolicy, "blacklist": blacklist, "whitelist": uniqueStrings(whitelist),
+		"duplicateGuidPolicy": node.DuplicateGUIDPolicy, "blacklist": uniqueStrings(blacklist), "whitelist": uniqueStrings(whitelist),
 		"generatedAt": time.Now().UTC(),
 	})
 }
@@ -1767,11 +1817,18 @@ func availableNodesQuery(db *gorm.DB, userID uint64) *gorm.DB {
 
 func whitelistDevicesQuery(db *gorm.DB, nodeID uint64) *gorm.DB {
 	return db.Model(&model.Device{}).
+		Joins("JOIN users ON users.id = devices.user_id").
 		Joins("JOIN user_permission_groups ON user_permission_groups.user_id = devices.user_id").
 		Joins("JOIN node_permission_groups ON node_permission_groups.group_id = user_permission_groups.group_id").
 		Joins("JOIN permission_groups ON permission_groups.id = user_permission_groups.group_id").
-		Where("node_permission_groups.node_id = ? AND permission_groups.enabled = ? AND devices.enabled = ?",
-			nodeID, true, true)
+		Where("node_permission_groups.node_id = ? AND permission_groups.enabled = ? AND users.enabled = ? AND devices.enabled = ?",
+			nodeID, true, true, true)
+}
+
+func disabledDevicesQuery(db *gorm.DB) *gorm.DB {
+	return db.Model(&model.Device{}).
+		Joins("JOIN users ON users.id = devices.user_id").
+		Where("users.enabled = ?", false)
 }
 
 func permissionGroupLinkIDs(tx *gorm.DB, groupID uint64) ([]uint64, []uint64, error) {
