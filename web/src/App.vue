@@ -492,7 +492,7 @@ function nodePresence(node: Node) {
   if (!node.enabled) return { tone: 'red', label: '已停用', detail: '节点已停用' }
   if (!node.lastSeenAt) return { tone: 'red', label: '离线', detail: '从未收到心跳' }
   const age = Math.max(0, heartbeatNow.value - new Date(node.lastSeenAt).getTime())
-  if (age <= 20_000) return { tone: 'green', label: '在线', detail: formatAge(age) }
+  if (age <= 90_000) return { tone: 'green', label: '在线', detail: formatAge(age) }
   if (age <= 10 * 60_000) return { tone: 'yellow', label: '等待心跳', detail: formatAge(age) }
   return { tone: 'red', label: '离线', detail: formatAge(age) }
 }

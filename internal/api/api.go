@@ -1517,11 +1517,13 @@ func (s *Server) nodeSessions(w http.ResponseWriter, r *http.Request) {
 		ConnectedAt: now, LastHeartbeat: now,
 	}
 	updates := map[string]any{
-		"remote_ip":      input.RemoteIP,
 		"rx_bytes":       gorm.Expr("rx_bytes + ?", input.RXBytes),
 		"tx_bytes":       gorm.Expr("tx_bytes + ?", input.TXBytes),
 		"last_heartbeat": now,
 		"disconnected":   nil,
+	}
+	if input.RemoteIP = strings.TrimSpace(input.RemoteIP); net.ParseIP(input.RemoteIP) != nil {
+		updates["remote_ip"] = input.RemoteIP
 	}
 	if input.Event == "online" {
 		updates["connected_at"] = now
