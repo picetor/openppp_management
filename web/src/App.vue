@@ -44,18 +44,9 @@ const themeMode = ref<ThemeMode>(
 )
 const deviceForm = reactive({ name: '', guid: '' })
 const userForm = reactive({ username: '', displayName: '', password: '', role: 'user', groupIds: [] as number[] })
-const defaultNodeConfig = () => JSON.stringify({
-  key: {
-    protocol: 'aes-128-cfb',
-    'protocol-key': '',
-    transport: 'aes-256-cfb',
-    'transport-key': '',
-  },
-  client: { server: 'ppp://example.com:20000/', bandwidth: 0, mappings: [] },
-}, null, 2)
 const nodeForm = reactive({
   key: '', name: '', accessMode: 'blacklist', duplicateGuidPolicy: 'replace_old',
-  enabled: true, published: true, config: defaultNodeConfig(),
+  enabled: true, published: true,
 })
 const ruleForm = reactive({ guid: '', effect: 'deny', reason: '' })
 const groupForm = reactive({ key: '', name: '', enabled: true, nodeIds: [] as number[] })
@@ -218,19 +209,13 @@ function openCreateNode() {
   editingNode.value = null
   Object.assign(nodeForm, {
     key: '', name: '', accessMode: 'blacklist', duplicateGuidPolicy: 'replace_old',
-    enabled: true, published: true, config: defaultNodeConfig(),
+    enabled: true, published: true,
   })
   nodeDialog.value = true
 }
 
 function openEditNode(node: Node) {
   editingNode.value = node
-  let config = node.configJson
-  try {
-    config = JSON.stringify(JSON.parse(node.configJson), null, 2)
-  } catch {
-    // Keep the original text visible so the administrator can repair it.
-  }
   Object.assign(nodeForm, {
     key: node.key,
     name: node.name,
@@ -238,14 +223,12 @@ function openEditNode(node: Node) {
     duplicateGuidPolicy: node.duplicateGuidPolicy,
     enabled: node.enabled,
     published: node.published,
-    config,
   })
   nodeDialog.value = true
 }
 
 async function saveNode() {
   try {
-    const config = JSON.parse(nodeForm.config)
     if (editingNode.value) {
       await api(`/api/v1/nodes/${editingNode.value.id}`, {
         method: 'PATCH',
@@ -255,7 +238,6 @@ async function saveNode() {
           published: nodeForm.published,
           accessMode: nodeForm.accessMode,
           duplicateGuidPolicy: nodeForm.duplicateGuidPolicy,
-          config,
         }),
       })
       nodeDialog.value = false
@@ -266,7 +248,7 @@ async function saveNode() {
     }
     await api<Node>('/api/v1/nodes', {
       method: 'POST',
-      body: JSON.stringify({ ...nodeForm, config }),
+      body: JSON.stringify(nodeForm),
     })
     nodeDialog.value = false
     ElMessage.success('节点已创建，请在服务端填写节点标识和全局通讯密钥')
@@ -640,7 +622,13 @@ onUnmounted(() => {
         <div class="table-panel">
           <el-table :data="nodes">
             <el-table-column label="节点" min-width="180">
-              <template #default="{ row }"><b>{{ row.name }}</b><small class="table-sub">{{ row.key }}</small></template>
+              <template #default="{ row }">
+                <b>{{ row.name }}</b>
+                <small class="table-sub">{{ row.key }}</small>
+                <small :class="['table-sub', row.configReady ? 'config-ready' : 'config-waiting']">
+                  {{ row.configReady ? '配置已同步' : '等待服务端上传配置' }}
+                </small>
+              </template>
             </el-table-column>
             <el-table-column label="权限组" min-width="180">
               <template #default="{ row }">
@@ -845,7 +833,7 @@ onUnmounted(() => {
       </el-form-item>
       <el-form-item label="重复 GUID"><el-select v-model="nodeForm.duplicateGuidPolicy"><el-option label="新连接替换旧连接" value="replace_old" /><el-option label="拒绝新连接" value="reject_new" /></el-select></el-form-item>
       <div class="form-grid"><el-form-item label="节点状态"><el-switch v-model="nodeForm.enabled" active-text="允许节点拉取策略" inactive-text="停用节点" /></el-form-item><el-form-item label="订阅发布"><el-switch v-model="nodeForm.published" active-text="显示在订阅中" inactive-text="从订阅隐藏" /></el-form-item></div>
-      <el-form-item label="OpenPPP2 客户端配置模板"><el-input v-model="nodeForm.config" type="textarea" :rows="14" class="code-input" /></el-form-item>
+      <el-alert title="无需填写配置模板。服务端使用节点标识和通讯密钥连接后，会通过心跳自动上传原始配置。" type="info" :closable="false" />
     </el-form>
     <template #footer><el-button @click="nodeDialog = false">取消</el-button><el-button type="primary" @click="saveNode">{{ editingNode ? '保存修改' : '创建节点' }}</el-button></template>
   </el-dialog>

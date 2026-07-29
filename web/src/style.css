@@ -107,6 +107,8 @@ code { font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
 .add-card b { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: white; color: var(--blue); font-size: 24px; }
 .table-panel { padding: 6px 16px 16px; overflow: hidden; }
 .table-sub { display: block; color: #8a96a8; margin-top: 4px; }
+.config-ready { color: #17a77f; }
+.config-waiting { color: #d28a14; }
 .node-presence { display: flex; align-items: center; gap: 11px; }
 .node-presence > div { display: flex; flex-direction: column; gap: 3px; }
 .node-presence b { font-size: 13px; }

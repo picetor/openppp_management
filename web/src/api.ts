@@ -31,6 +31,7 @@ export type Node = {
   policyRevision: number
   groupIds: number[]
   whitelistGuidCount: number
+  configReady: boolean
   lastSeenAt?: string
 }
 

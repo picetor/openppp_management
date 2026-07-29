@@ -891,6 +891,7 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 		model.Node
 		GroupIDs           []uint64 `json:"groupIds"`
 		WhitelistGUIDCount int64    `json:"whitelistGuidCount"`
+		ConfigReady        bool     `json:"configReady"`
 	}
 	result := make([]item, 0, len(nodes))
 	for _, node := range nodes {
@@ -902,7 +903,10 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 		}
 		var count int64
 		whitelistDevicesQuery(s.db, node.ID).Distinct("devices.guid").Count(&count)
-		result = append(result, item{Node: node, GroupIDs: groupIDs, WhitelistGUIDCount: count})
+		result = append(result, item{
+			Node: node, GroupIDs: groupIDs, WhitelistGUIDCount: count,
+			ConfigReady: nodeConfigReady(node.ConfigJSON),
+		})
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -930,9 +934,17 @@ func (s *Server) createNode(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if strings.TrimSpace(input.Key) == "" || strings.TrimSpace(input.Name) == "" || !json.Valid(input.Config) {
-		writeError(w, http.StatusBadRequest, "node key, name and valid config are required")
+	if strings.TrimSpace(input.Key) == "" || strings.TrimSpace(input.Name) == "" {
+		writeError(w, http.StatusBadRequest, "node key and name are required")
 		return
+	}
+	configJSON := "{}"
+	if len(input.Config) > 0 && string(input.Config) != "null" {
+		if !json.Valid(input.Config) {
+			writeError(w, http.StatusBadRequest, "invalid node config")
+			return
+		}
+		configJSON = string(input.Config)
 	}
 	input.AccessMode = validAccessMode(input.AccessMode)
 	input.DuplicateGUIDPolicy = validDuplicatePolicy(input.DuplicateGUIDPolicy)
@@ -952,7 +964,7 @@ func (s *Server) createNode(w http.ResponseWriter, r *http.Request) {
 	node := model.Node{
 		Key: strings.TrimSpace(input.Key), Name: strings.TrimSpace(input.Name), Enabled: enabled, Published: published,
 		AccessMode: input.AccessMode, DuplicateGUIDPolicy: input.DuplicateGUIDPolicy,
-		TokenHash: security.TokenHash(legacyCredential), ConfigJSON: string(input.Config), PolicyRevision: 1,
+		TokenHash: security.TokenHash(legacyCredential), ConfigJSON: configJSON, PolicyRevision: 1,
 	}
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&node).Error; err != nil {
@@ -1204,6 +1216,10 @@ func (s *Server) subscriptionNodeConfig(w http.ResponseWriter, r *http.Request) 
 		Distinct("nodes.*").First(&node).Error
 	if err != nil {
 		writeError(w, http.StatusNotFound, "node not available in this subscription")
+		return
+	}
+	if !nodeConfigReady(node.ConfigJSON) {
+		writeError(w, http.StatusConflict, "node configuration has not been uploaded yet")
 		return
 	}
 	configJSON, err := injectGUIDRaw(node.ConfigJSON, device.GUID)
@@ -1596,6 +1612,14 @@ func injectGUID(raw, guid string) (map[string]any, error) {
 		delete(server, "backend-key")
 	}
 	return value, nil
+}
+
+func nodeConfigReady(raw string) bool {
+	var value struct {
+		Client json.RawMessage `json:"client"`
+	}
+	return json.Unmarshal([]byte(raw), &value) == nil &&
+		len(value.Client) > 0 && string(value.Client) != "null"
 }
 
 func sanitizeNodeConfiguration(raw json.RawMessage) (string, error) {
