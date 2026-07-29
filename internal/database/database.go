@@ -3,9 +3,11 @@ package database
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/openppp2/openppp2-management/internal/config"
@@ -17,7 +19,13 @@ import (
 )
 
 func Open(cfg config.Config) (*gorm.DB, error) {
-	gormConfig := &gorm.Config{Logger: logger.Default.LogMode(logger.Warn)}
+	databaseLogger := logger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), logger.Config{
+		SlowThreshold:             200 * time.Millisecond,
+		LogLevel:                  logger.Warn,
+		IgnoreRecordNotFoundError: true,
+		Colorful:                  false,
+	})
+	gormConfig := &gorm.Config{Logger: databaseLogger}
 
 	if cfg.DatabaseDriver == "mysql" {
 		return gorm.Open(mysql.Open(cfg.DatabaseDSN), gormConfig)
