@@ -54,6 +54,17 @@ const groupForm = reactive({ key: '', name: '', enabled: true, nodeIds: [] as nu
 const isAdmin = computed(() => me.value?.role === 'admin')
 const nodeNames = computed(() => new Map(nodes.value.map((node) => [node.id, node.name])))
 const groupNames = computed(() => new Map(permissionGroups.value.map((group) => [group.id, group.name])))
+const managementTemplateReady = computed(() => (
+  publicURL.value.trim() !== '' && nodeForm.key.trim() !== '' && communicationKey.value !== ''
+))
+const managementConfigTemplate = computed(() => [
+  '    "management": {',
+  `      "endpoint": ${JSON.stringify(publicURL.value.trim())},`,
+  `      "node-id": ${JSON.stringify(nodeForm.key.trim())},`,
+  `      "communication-key": ${JSON.stringify(communicationKey.value)},`,
+  '      "enabled": true',
+  '    },',
+].join('\n'))
 watch(active, (section) => {
   if (persistentSections.includes(section)) {
     window.localStorage.setItem('openppp2.activeSection', section)
@@ -873,6 +884,27 @@ onUnmounted(() => {
       <el-form-item label="重复 GUID"><el-select v-model="nodeForm.duplicateGuidPolicy"><el-option label="新连接替换旧连接" value="replace_old" /><el-option label="拒绝新连接" value="reject_new" /></el-select></el-form-item>
       <div class="form-grid"><el-form-item label="节点状态"><el-switch v-model="nodeForm.enabled" active-text="允许节点拉取策略" inactive-text="停用节点" /></el-form-item><el-form-item label="订阅发布"><el-switch v-model="nodeForm.published" active-text="显示在订阅中" inactive-text="从订阅隐藏" /></el-form-item></div>
       <el-alert title="无需填写配置模板。服务端使用节点标识和通讯密钥连接后，会通过心跳自动上传原始配置。" type="info" :closable="false" />
+      <div class="management-template">
+        <div class="management-template-heading">
+          <div>
+            <strong>服务端接入配置</strong>
+            <small>粘贴到服务端 appsettings.json 的 server 对象中</small>
+          </div>
+          <el-button
+            type="primary"
+            :disabled="!managementTemplateReady"
+            @click="copy(managementConfigTemplate)"
+          >复制配置</el-button>
+        </div>
+        <pre>{{ managementConfigTemplate }}</pre>
+        <el-alert
+          v-if="!managementTemplateReady"
+          title="请填写节点标识，并先在服务器设置中保存外部访问地址和节点通讯密钥。"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
+      </div>
     </el-form>
     <template #footer><el-button @click="nodeDialog = false">取消</el-button><el-button type="primary" @click="saveNode">{{ editingNode ? '保存修改' : '创建节点' }}</el-button></template>
   </el-dialog>

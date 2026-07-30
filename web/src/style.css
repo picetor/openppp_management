@@ -120,6 +120,11 @@ code { font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
 .tag-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .code-input textarea { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
+.management-template { margin-top: 16px; display: grid; gap: 10px; }
+.management-template-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.management-template-heading div { display: grid; gap: 3px; }
+.management-template-heading small { color: var(--muted); }
+.management-template pre { margin: 0; padding: 14px 16px; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: #f3f6fa; color: #273448; font: 12px/1.65 "Cascadia Code", Consolas, monospace; white-space: pre; }
 .secret-block { margin-top: 18px; display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .secret-block span { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
 .secret-block code { background: #f3f6fa; padding: 12px; border-radius: 8px; overflow: auto; }
@@ -153,7 +158,8 @@ html.dark .login-panel,
 html.dark .communication-panel { background: var(--surface); border-color: var(--line); }
 html.dark .guid,
 html.dark .subscription-address code,
-html.dark .secret-block code { background: #101720; color: #cbd5e3; }
+html.dark .secret-block code,
+html.dark .management-template pre { background: #101720; color: #cbd5e3; }
 html.dark .activity-row,
 html.dark .card-actions { border-color: var(--line); }
 html.dark .device-meta b { color: #d4dbe6; }
@@ -185,5 +191,6 @@ html.dark .el-table { --el-table-bg-color: var(--surface); --el-table-tr-bg-colo
   .activity-row { grid-template-columns: 10px 1fr; }
   .activity-row span, .activity-row time { grid-column: 2; }
   .form-grid { grid-template-columns: 1fr; gap: 0; }
+  .management-template-heading { align-items: stretch; flex-direction: column; }
   .settings-card { grid-template-columns: 1fr; gap: 18px; }
   }
