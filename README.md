@@ -26,10 +26,10 @@ SQLite：
 cd /opt/openppp_management && cp .env .env.backup && git pull --ff-only origin main && docker compose -f compose.sqlite.yaml up -d --build
 ```
 
-1Panel 兼容 MySQL 容器（数据库地址已配置在 `.env` 中）：
+1Panel 兼容 MySQL 容器（使用 `compose.mysql-external.yaml`）：
 
 ```bash
-cd /opt/openppp_management && cp .env .env.backup && git pull --ff-only origin main && docker compose up -d --build management
+cd /opt/openppp_management && cp .env .env.backup && git pull --ff-only origin main && docker compose -f compose.yaml -f compose.mysql-external.yaml up -d --build management
 ```
 
 外部 MySQL（安装时生成了 Docker 网络配置）：
@@ -39,7 +39,13 @@ cd /opt/openppp_management && cp .env .env.backup && git pull --ff-only origin m
 ```
 
 1Panel 的 MySQL 容器不会由本项目拉取或启动，面板只通过 `.env` 中的
-`OPENPPP2_DATABASE_DSN` 连接它。如果安装时修改了安装目录，请将
+`OPENPPP2_DATABASE_DSN` 连接它。更新后可以查看面板日志：
+
+```bash
+docker compose -f compose.yaml -f compose.mysql-external.yaml logs --tail=100 management
+```
+
+如果安装时修改了安装目录，请将
 `/opt/openppp_management` 替换为实际目录。
 更新只替换程序和前端容器，不会删除 `data/` 中的 SQLite 数据或 Docker 数据卷。
 
