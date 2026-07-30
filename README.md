@@ -10,7 +10,7 @@ curl -fsSL https://raw.githubusercontent.com/picetor/openppp_management/main/ins
 sudo sh /tmp/openppp-management-install.sh
 ```
 
-安装程序支持 SQLite、外部 MySQL、本地 MySQL Docker 容器，以及自定义面板监听地址
+安装程序支持 SQLite、1Panel 等平台提供的兼容 MySQL 容器、外部 MySQL，以及自定义面板监听地址
 （默认 `127.0.0.1`）、监听端口（默认 `8080`）、外部访问地址、管理员密码和节点通讯密钥。
 
 默认安装目录为 `/opt/openppp_management`，最终配置保存在该目录的 `.env`。
@@ -26,19 +26,21 @@ SQLite：
 cd /opt/openppp_management && cp .env .env.backup && git pull --ff-only origin main && docker compose -f compose.sqlite.yaml up -d --build
 ```
 
-容器 MySQL（Compose 管理 `mysql` 服务）：
+1Panel 兼容 MySQL 容器（数据库地址已配置在 `.env` 中）：
 
 ```bash
-cd /opt/openppp_management && cp .env .env.backup && git pull --ff-only origin main && docker compose --profile mysql up -d --build
+cd /opt/openppp_management && cp .env .env.backup && git pull --ff-only origin main && docker compose up -d --build management
 ```
 
-外部 MySQL（自动加载安装时生成的 Docker 网络配置）：
+外部 MySQL（安装时生成了 Docker 网络配置）：
 
 ```bash
 cd /opt/openppp_management && cp .env .env.backup && git pull --ff-only origin main && if [ -f compose.mysql-external.yaml ]; then docker compose -f compose.yaml -f compose.mysql-external.yaml up -d --build management; else docker compose up -d --build management; fi
 ```
 
-如果安装时修改了安装目录，请将 `/opt/openppp_management` 替换为实际目录。
+1Panel 的 MySQL 容器不会由本项目拉取或启动，面板只通过 `.env` 中的
+`OPENPPP2_DATABASE_DSN` 连接它。如果安装时修改了安装目录，请将
+`/opt/openppp_management` 替换为实际目录。
 更新只替换程序和前端容器，不会删除 `data/` 中的 SQLite 数据或 Docker 数据卷。
 
 OpenPPP2 Management 是一个多用户配置、固定 GUID、客户端订阅和服务端节点访问策略面板。
