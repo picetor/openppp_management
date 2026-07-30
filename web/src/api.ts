@@ -15,6 +15,7 @@ export type Device = {
   enabled: boolean
   online: boolean
   nodeIds: number[]
+  permissionGroupNames: string[]
   subscriptionUrl: string
   lastSeenAt?: string
 }

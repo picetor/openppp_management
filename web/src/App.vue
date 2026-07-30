@@ -645,8 +645,8 @@ onUnmounted(() => {
             </div>
             <div class="field-label">权限组自动分配的订阅节点</div>
             <div class="tag-list">
-              <el-tag v-for="nodeId in device.nodeIds" :key="nodeId" effect="plain">{{ nodeNames.get(nodeId) || `节点 ${nodeId}` }}</el-tag>
-              <span v-if="!device.nodeIds.length" class="muted">当前权限组没有可用节点</span>
+              <el-tag v-for="groupName in device.permissionGroupNames" :key="groupName" effect="plain">{{ groupName }}</el-tag>
+              <span v-if="!device.permissionGroupNames.length" class="muted">当前权限组没有可用节点</span>
             </div>
             <div class="device-meta"><span>最后在线</span><b>{{ formatTime(device.lastSeenAt) }}</b></div>
             <div class="card-actions">

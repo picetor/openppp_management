@@ -735,9 +735,10 @@ func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
 	}
 	type item struct {
 		model.Device
-		NodeIDs         []uint64 `json:"nodeIds"`
-		Online          bool     `json:"online"`
-		SubscriptionURL string   `json:"subscriptionUrl"`
+		NodeIDs              []uint64 `json:"nodeIds"`
+		PermissionGroupNames []string `json:"permissionGroupNames"`
+		Online               bool     `json:"online"`
+		SubscriptionURL      string   `json:"subscriptionUrl"`
 	}
 	result := make([]item, 0, len(devices))
 	cutoff := time.Now().UTC().Add(-s.cfg.NodeOfflineAfter)
@@ -745,6 +746,22 @@ func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
 		nodeIDs := make([]uint64, 0)
 		availableNodesQuery(s.db, device.UserID).
 			Distinct("nodes.id").Order("nodes.id").Pluck("nodes.id", &nodeIDs)
+		var groups []model.PermissionGroup
+		if err := s.db.Model(&model.PermissionGroup{}).
+			Select("permission_groups.id, permission_groups.name").
+			Joins("JOIN user_permission_groups ON user_permission_groups.group_id = permission_groups.id").
+			Joins("JOIN node_permission_groups ON node_permission_groups.group_id = permission_groups.id").
+			Joins("JOIN nodes ON nodes.id = node_permission_groups.node_id").
+			Where("user_permission_groups.user_id = ? AND permission_groups.enabled = ? AND nodes.enabled = ? AND nodes.published = ?",
+				device.UserID, true, true, true).
+			Distinct("permission_groups.id, permission_groups.name").Order("permission_groups.id").Find(&groups).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "unable to load permission groups")
+			return
+		}
+		groupNames := make([]string, 0, len(groups))
+		for _, group := range groups {
+			groupNames = append(groupNames, group.Name)
+		}
 		var count int64
 		s.db.Model(&model.OnlineSession{}).Where("guid = ? AND disconnected IS NULL AND last_heartbeat > ?", device.GUID, cutoff).Count(&count)
 		raw, err := s.visibleSubscriptionToken(device.ID)
@@ -753,7 +770,7 @@ func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result = append(result, item{
-			Device: device, NodeIDs: nodeIDs, Online: count > 0,
+			Device: device, NodeIDs: nodeIDs, PermissionGroupNames: groupNames, Online: count > 0,
 			SubscriptionURL: fmt.Sprintf("%s/sub/v1/%s", s.publicURL(), raw),
 		})
 	}
@@ -1273,7 +1290,7 @@ func (s *Server) subscriptionNodeConfig(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "invalid node configuration")
 		return
 	}
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-appsettings.json"`, node.Key))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.json"`, safeConfigFilename(node.Name, node.Key)))
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(configJSON)
@@ -1322,7 +1339,7 @@ New-Item -ItemType Directory -Force -Path $serverDir | Out-Null
 `)
 	for _, node := range nodes {
 		fmt.Fprintf(&script, "Invoke-WebRequest -UseBasicParsing -Uri '%s/nodes/%s/config' -OutFile (Join-Path $serverDir '%s.json')\n",
-			baseURL, node.Key, node.Key)
+			baseURL, node.Key, safeConfigFilename(node.Name, node.Key))
 	}
 	fmt.Fprintf(&script, "Write-Host 'Downloaded %d OpenPPP2 configuration(s) to' $serverDir\n", len(nodes))
 	writeSubscriptionScript(w, "openppp2-subscription.ps1", script.String())
@@ -1370,7 +1387,7 @@ mkdir -p "$server_dir"
 `)
 	for _, node := range nodes {
 		fmt.Fprintf(&script, "curl -fsSL '%s/nodes/%s/config' -o \"$server_dir/%s.json\"\n",
-			baseURL, node.Key, node.Key)
+			baseURL, node.Key, safeConfigFilename(node.Name, node.Key))
 	}
 	fmt.Fprintf(&script, "printf 'Downloaded %d OpenPPP2 configuration(s) to %%s\\n' \"$server_dir\"\n", len(nodes))
 	writeSubscriptionScript(w, "openppp2-subscription.sh", script.String())
@@ -1384,6 +1401,21 @@ func (s *Server) subscriptionNodes(w http.ResponseWriter, userID uint64) ([]mode
 		return nil, false
 	}
 	return nodes, true
+}
+
+func safeConfigFilename(name, fallback string) string {
+	name = strings.TrimSpace(name)
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || strings.ContainsRune(`< > : " / \\ | ? *`, r) {
+			return '_'
+		}
+		return r
+	}, name)
+	name = strings.Trim(name, " .")
+	if name == "" {
+		return fallback
+	}
+	return name
 }
 
 func writeSubscriptionScript(w http.ResponseWriter, filename, script string) {
