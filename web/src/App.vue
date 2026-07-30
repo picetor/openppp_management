@@ -58,13 +58,13 @@ const managementTemplateReady = computed(() => (
   publicURL.value.trim() !== '' && nodeForm.key.trim() !== '' && communicationKey.value !== ''
 ))
 const managementConfigTemplate = computed(() => [
-  '    "management": {',
-  `      "endpoint": ${JSON.stringify(publicURL.value.trim())},`,
-  `      "node-id": ${JSON.stringify(nodeForm.key.trim())},`,
-  `      "communication-key": ${JSON.stringify(communicationKey.value)},`,
-  '      "enabled": true',
-  '    },',
-].join('\n'))
+  '        "management": {',
+  '            "enabled": true,',
+  `            "endpoint": ${JSON.stringify(publicURL.value.trim())},`,
+  `            "node-id": ${JSON.stringify(nodeForm.key.trim())},`,
+  `            "communication-key": ${JSON.stringify(communicationKey.value)}`,
+  '        },',
+].join('\r\n'))
 watch(active, (section) => {
   if (persistentSections.includes(section)) {
     window.localStorage.setItem('openppp2.activeSection', section)
