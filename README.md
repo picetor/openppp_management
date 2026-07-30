@@ -15,6 +15,44 @@ sudo sh /tmp/openppp-management-install.sh
 
 默认安装目录为 `/opt/openppp_management`，最终配置保存在该目录的 `.env`。
 
+## 更新现有安装
+
+更新时不要重复执行安装脚本：脚本会重新询问配置并覆盖 `.env`。在现有安装目录中执行：
+
+```bash
+cd /opt/openppp_management
+cp .env .env.backup
+git pull --ff-only origin main
+```
+
+然后根据当前数据库部署方式重新构建并启动面板：
+
+SQLite：
+
+```bash
+docker compose -f compose.sqlite.yaml up -d --build
+```
+
+本地 MySQL Docker 容器：
+
+```bash
+docker compose --profile mysql up -d --build
+```
+
+外部 MySQL：
+
+```bash
+docker compose up -d --build management
+```
+
+如果安装外部 MySQL 时生成了 `compose.mysql-external.yaml`，需要同时加载该文件：
+
+```bash
+docker compose -f compose.yaml -f compose.mysql-external.yaml up -d --build management
+```
+
+更新只替换程序和前端容器，不会删除 `data/` 中的 SQLite 数据或 Docker 数据卷。
+
 OpenPPP2 Management 是一个多用户配置、固定 GUID、客户端订阅和服务端节点访问策略面板。
 
 它只负责控制面：
