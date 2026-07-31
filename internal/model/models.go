@@ -15,6 +15,8 @@ type User struct {
 	PasswordHash string    `gorm:"size:255;not null" json:"-"`
 	Role         string    `gorm:"size:20;not null;default:user" json:"role"`
 	Enabled      bool      `gorm:"not null;default:true" json:"enabled"`
+	TrafficLimit int64     `gorm:"not null;default:-1" json:"trafficLimit"` // -1 = 不限量
+	TrafficUsed  int64     `gorm:"not null;default:0" json:"trafficUsed"`   // 双向流量总和（rx+tx）
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 }

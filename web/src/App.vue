@@ -48,7 +48,7 @@ const themeMode = ref<ThemeMode>(
   savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'system' ? savedTheme : 'system',
 )
 const deviceForm = reactive({ name: '', guid: '' })
-const userForm = reactive({ username: '', displayName: '', password: '', role: 'user', groupIds: [] as number[] })
+const userForm = reactive({ username: '', displayName: '', password: '', role: 'user', groupIds: [] as number[], trafficLimit: -1 })
 const nodeForm = reactive({
   key: '', name: '', accessMode: 'blacklist', duplicateGuidPolicy: 'replace_old',
   enabled: true, published: true,
@@ -175,9 +175,13 @@ async function createDevice() {
 
 async function createUser() {
   try {
-    await api('/api/v1/users', { method: 'POST', body: JSON.stringify(userForm) })
+    const payload = {
+      ...userForm,
+      trafficLimit: userForm.trafficLimit === -1 ? -1 : Math.round(userForm.trafficLimit * 1024 ** 3),
+    }
+    await api('/api/v1/users', { method: 'POST', body: JSON.stringify(payload) })
     userDialog.value = false
-    Object.assign(userForm, { username: '', displayName: '', password: '', role: 'user', groupIds: [] })
+    Object.assign(userForm, { username: '', displayName: '', password: '', role: 'user', groupIds: [], trafficLimit: -1 })
     await loadAll()
   } catch (error) {
     ElMessage.error((error as Error).message)
@@ -187,10 +191,38 @@ async function createUser() {
 function openCreateUser() {
   const defaultGroup = permissionGroups.value.find((group) => group.key === 'default')
   Object.assign(userForm, {
-    username: '', displayName: '', password: '', role: 'user',
+    username: '', displayName: '', password: '', role: 'user', trafficLimit: -1,
     groupIds: defaultGroup ? [defaultGroup.id] : [],
   })
   userDialog.value = true
+}
+
+async function setUserTraffic(user: User) {
+  const current = user.trafficLimit > 0 ? Math.round(user.trafficLimit / 1024 ** 3) : -1
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `设置“${user.displayName}”的流量上限（GB）。已用 ${formatBytes(user.trafficUsed)}，上限 -1 表示不限量。`,
+      '设置流量上限',
+      {
+        confirmButtonText: '保存',
+        cancelButtonText: '取消',
+        inputValue: String(current),
+        inputPlaceholder: '例如 100，-1 表示不限量',
+        inputValidator: (raw: string) => {
+          const gb = Number(raw.trim())
+          if (!Number.isFinite(gb) || gb < -1) return '请输入 -1 或大于等于 0 的数值（GB）'
+          return true
+        },
+      },
+    )
+    const gb = Number(value.trim())
+    const trafficLimit = gb === -1 ? -1 : Math.round(gb * 1024 ** 3)
+    await api(`/api/v1/users/${user.id}`, { method: 'PATCH', body: JSON.stringify({ trafficLimit }) })
+    await loadAll()
+    ElMessage.success('流量上限已更新')
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'cancel') ElMessage.error(error.message)
+  }
 }
 
 async function assignUserGroups(user: User, groupIds: number[]) {
@@ -870,8 +902,18 @@ onUnmounted(() => {
               </template>
             </el-table-column>
             <el-table-column label="状态"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '禁用' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="170" fixed="right">
+            <el-table-column label="流量" min-width="170">
               <template #default="{ row }">
+                <div v-if="row.trafficLimit > 0" class="traffic-cell" :class="{ over: row.trafficUsed >= row.trafficLimit }">
+                  <span>{{ formatBytes(row.trafficUsed) }} / {{ formatBytes(row.trafficLimit) }}</span>
+                  <el-tag v-if="row.trafficUsed >= row.trafficLimit" type="danger" size="small" effect="plain">已用尽</el-tag>
+                </div>
+                <span v-else class="muted">不限量</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="210" fixed="right">
+              <template #default="{ row }">
+                <el-button text type="primary" :disabled="row.id === me?.id" @click="setUserTraffic(row)">流量</el-button>
                 <el-button text :type="row.enabled ? 'warning' : 'success'" :disabled="row.id === me?.id" @click="toggleUser(row)">{{ row.enabled ? '封禁' : '启用' }}</el-button>
                 <el-button text type="danger" :disabled="row.id === me?.id" @click="deleteUser(row)">删除</el-button>
               </template>
@@ -941,6 +983,10 @@ onUnmounted(() => {
       <el-form-item label="显示名称"><el-input v-model="userForm.displayName" /></el-form-item>
       <el-form-item label="初始密码"><el-input v-model="userForm.password" type="password" show-password /></el-form-item>
       <el-form-item label="角色"><el-radio-group v-model="userForm.role"><el-radio value="user">普通用户</el-radio><el-radio value="admin">管理员</el-radio></el-radio-group></el-form-item>
+      <el-form-item label="流量上限(GB)">
+        <el-input-number v-model="userForm.trafficLimit" :min="-1" :step="10" style="width: 100%" />
+        <small class="table-sub">-1 表示不限量；达到上限后该用户全部设备（含新建）将停止通信</small>
+      </el-form-item>
       <el-form-item label="权限组">
         <el-select v-model="userForm.groupIds" multiple filterable class="wide" placeholder="选择用户所属权限组">
           <el-option v-for="group in permissionGroups" :key="group.id" :label="group.name" :value="group.id" />

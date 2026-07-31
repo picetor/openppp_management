@@ -5,6 +5,8 @@ export type User = {
   role: 'admin' | 'user'
   enabled: boolean
   groupIds: number[]
+  trafficLimit: number // 字节，-1 = 不限量
+  trafficUsed: number // 字节，双向流量总和
 }
 
 export type Device = {

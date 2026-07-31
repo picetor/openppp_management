@@ -391,11 +391,12 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Username    string    `json:"username"`
-		DisplayName string    `json:"displayName"`
-		Password    string    `json:"password"`
-		Role        string    `json:"role"`
-		GroupIDs    *[]uint64 `json:"groupIds"`
+		Username     string    `json:"username"`
+		DisplayName  string    `json:"displayName"`
+		Password     string    `json:"password"`
+		Role         string    `json:"role"`
+		GroupIDs     *[]uint64 `json:"groupIds"`
+		TrafficLimit int64     `json:"trafficLimit"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -412,9 +413,12 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	if input.Role != "admin" {
 		input.Role = "user"
 	}
+	if input.TrafficLimit == 0 {
+		input.TrafficLimit = -1 // 未指定或 0 视为不限量
+	}
 	user := model.User{
 		Username: strings.TrimSpace(input.Username), DisplayName: strings.TrimSpace(input.DisplayName),
-		PasswordHash: hash, Role: input.Role, Enabled: true,
+		PasswordHash: hash, Role: input.Role, Enabled: true, TrafficLimit: input.TrafficLimit,
 	}
 	if user.DisplayName == "" {
 		user.DisplayName = user.Username
@@ -452,35 +456,52 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Enabled *bool `json:"enabled"`
+		Enabled      *bool  `json:"enabled"`
+		TrafficLimit *int64 `json:"trafficLimit"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if input.Enabled == nil {
-		writeError(w, http.StatusBadRequest, "enabled is required")
+	if input.Enabled == nil && input.TrafficLimit == nil {
+		writeError(w, http.StatusBadRequest, "enabled or trafficLimit is required")
 		return
 	}
-	if currentUser(r).ID == user.ID && !*input.Enabled {
-		writeError(w, http.StatusConflict, "cannot disable the current signed-in user")
-		return
-	}
-	if user.Role == "admin" && !*input.Enabled {
-		var enabledAdminCount int64
-		s.db.Model(&model.User{}).Where("role = ? AND enabled = ?", "admin", true).Count(&enabledAdminCount)
-		if enabledAdminCount <= 1 {
-			writeError(w, http.StatusConflict, "the last enabled administrator cannot be disabled")
+	if input.Enabled != nil {
+		if currentUser(r).ID == user.ID && !*input.Enabled {
+			writeError(w, http.StatusConflict, "cannot disable the current signed-in user")
 			return
 		}
-	}
-	if user.Enabled != *input.Enabled {
-		if err := s.db.Model(&user).Update("enabled", *input.Enabled).Error; err != nil {
-			writeError(w, http.StatusInternalServerError, "unable to update user")
-			return
+		if user.Role == "admin" && !*input.Enabled {
+			var enabledAdminCount int64
+			s.db.Model(&model.User{}).Where("role = ? AND enabled = ?", "admin", true).Count(&enabledAdminCount)
+			if enabledAdminCount <= 1 {
+				writeError(w, http.StatusConflict, "the last enabled administrator cannot be disabled")
+				return
+			}
 		}
-		user.Enabled = *input.Enabled
-		s.db.Where("user_id = ?", user.ID).Delete(&model.Session{})
-		s.bumpAllGroupPolicies()
+		if user.Enabled != *input.Enabled {
+			if err := s.db.Model(&user).Update("enabled", *input.Enabled).Error; err != nil {
+				writeError(w, http.StatusInternalServerError, "unable to update user")
+				return
+			}
+			user.Enabled = *input.Enabled
+			s.db.Where("user_id = ?", user.ID).Delete(&model.Session{})
+			s.bumpAllGroupPolicies()
+		}
+	}
+	if input.TrafficLimit != nil {
+		limit := *input.TrafficLimit
+		if limit == 0 {
+			limit = -1 // 0 视为不限量
+		}
+		if user.TrafficLimit != limit {
+			if err := s.db.Model(&user).Update("traffic_limit", limit).Error; err != nil {
+				writeError(w, http.StatusInternalServerError, "unable to update traffic limit")
+				return
+			}
+			user.TrafficLimit = limit
+			s.bumpAllGroupPolicies()
+		}
 	}
 	writeJSON(w, http.StatusOK, userItem{User: user, GroupIDs: userPermissionGroupIDs(s.db, user.ID)})
 }
@@ -1535,6 +1556,18 @@ func (s *Server) nodePolicy(w http.ResponseWriter, r *http.Request) {
 	var bannedGUIDs []string
 	s.db.Model(&model.DeviceBan{}).Where("unbanned_at IS NULL").Distinct().Pluck("guid", &bannedGUIDs)
 	blacklist = append(blacklist, bannedGUIDs...)
+	// 流量超限用户：其全部设备（含新建）均拒绝通信
+	var overLimitIDs []uint64
+	s.db.Model(&model.User{}).
+		Where("traffic_limit > 0 AND traffic_used >= traffic_limit").
+		Pluck("id", &overLimitIDs)
+	if len(overLimitIDs) > 0 {
+		var overDevices []model.Device
+		s.db.Where("user_id IN ?", overLimitIDs).Find(&overDevices)
+		for _, device := range overDevices {
+			blacklist = append(blacklist, device.GUID)
+		}
+	}
 	if node.AccessMode == "whitelist" {
 		var devices []model.Device
 		whitelistDevicesQuery(s.db, node.ID).Distinct("devices.*").Find(&devices)
@@ -1608,6 +1641,16 @@ func requestClientIP(r *http.Request) string {
 	return ""
 }
 
+// accumulateUserTraffic 将节点上报的会话流量增量（双向总和）累计到所属用户。
+func (s *Server) accumulateUserTraffic(guid string, rxBytes, txBytes uint64) {
+	var device model.Device
+	if err := s.db.Where("guid = ?", guid).First(&device).Error; err != nil {
+		return
+	}
+	s.db.Model(&model.User{}).Where("id = ?", device.UserID).
+		UpdateColumn("traffic_used", gorm.Expr("traffic_used + ?", rxBytes+txBytes))
+}
+
 func (s *Server) nodeSessions(w http.ResponseWriter, r *http.Request) {
 	node := currentNode(r)
 	var input struct {
@@ -1633,6 +1676,7 @@ func (s *Server) nodeSessions(w http.ResponseWriter, r *http.Request) {
 				"rx_bytes": gorm.Expr("rx_bytes + ?", input.RXBytes),
 				"tx_bytes": gorm.Expr("tx_bytes + ?", input.TXBytes),
 			})
+		s.accumulateUserTraffic(guid, input.RXBytes, input.TXBytes)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -1661,6 +1705,9 @@ func (s *Server) nodeSessions(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "unable to save session")
 		return
+	}
+	if input.Event != "online" {
+		s.accumulateUserTraffic(guid, input.RXBytes, input.TXBytes)
 	}
 	s.db.Model(&model.Device{}).Where("guid = ?", guid).Update("last_seen_at", now)
 	w.WriteHeader(http.StatusNoContent)
