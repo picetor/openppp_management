@@ -119,3 +119,16 @@ type OnlineSession struct {
 	LastHeartbeat time.Time  `gorm:"index;not null" json:"lastHeartbeat"`
 	Disconnected  *time.Time `json:"disconnectedAt"`
 }
+
+type DeviceBan struct {
+	ID               uint64     `gorm:"primaryKey" json:"id"`
+	DeviceID         uint64     `gorm:"index;not null" json:"deviceId"`
+	GUID             string     `gorm:"size:38;index;not null" json:"guid"`
+	BannedByUserID   uint64     `gorm:"index;not null" json:"bannedByUserId"`
+	BannedByRole     string     `gorm:"size:20;not null" json:"bannedByRole"`
+	Reason           string     `gorm:"size:255" json:"reason"`
+	UnbannedAt       *time.Time `json:"unbannedAt"`
+	UnbannedByUserID *uint64    `json:"unbannedByUserId"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+}

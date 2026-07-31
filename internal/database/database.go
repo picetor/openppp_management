@@ -51,6 +51,7 @@ func Migrate(db *gorm.DB) error {
 		&model.Node{},
 		&model.DeviceNode{},
 		&model.GUIDRule{},
+		&model.DeviceBan{},
 		&model.OnlineSession{},
 	)
 }

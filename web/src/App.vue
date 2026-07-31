@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api, type Device, type GUIDRule, type Node, type OnlineSession, type PermissionGroup, type User } from './api'
+import {
+  api, banDevice, unbanDevice, fetchDeviceBans,
+  type Device, type DeviceBan, type GUIDRule, type Node, type OnlineSession, type PermissionGroup, type User,
+} from './api'
 
 type Dashboard = { users: number; devices: number; nodes: number; online: number }
 type ThemeMode = 'system' | 'light' | 'dark'
@@ -22,6 +25,8 @@ const nodes = ref<Node[]>([])
 const permissionGroups = ref<PermissionGroup[]>([])
 const online = ref<OnlineSession[]>([])
 const rules = ref<GUIDRule[]>([])
+const deviceBans = ref<DeviceBan[]>([])
+const onlineSub = ref<'list' | 'blacklist'>('list')
 const selectedNode = ref<Node | null>(null)
 const heartbeatNow = ref(Date.now())
 let heartbeatTimer: number | undefined
@@ -96,13 +101,14 @@ const formatBytes = (value: number) => {
 }
 
 async function loadAll() {
-  const [stats, userList, deviceList, nodeList, onlineList, groupList, settings] = await Promise.all([
+  const [stats, userList, deviceList, nodeList, onlineList, groupList, banList, settings] = await Promise.all([
     api<Dashboard>('/api/v1/dashboard'),
     api<User[]>('/api/v1/users'),
     api<Device[]>('/api/v1/devices'),
     api<Node[]>('/api/v1/nodes'),
     api<OnlineSession[]>('/api/v1/online'),
     isAdmin.value ? api<PermissionGroup[]>('/api/v1/permission-groups') : Promise.resolve([]),
+    fetchDeviceBans(),
     isAdmin.value
       ? api<{ publicUrl: string; communicationKey: string }>('/api/v1/settings/general')
       : Promise.resolve({ publicUrl: '', communicationKey: '' }),
@@ -113,6 +119,7 @@ async function loadAll() {
   nodes.value = nodeList
   online.value = onlineList
   permissionGroups.value = groupList
+  deviceBans.value = banList
   communicationKey.value = settings.communicationKey
   publicURL.value = settings.publicUrl
 }
@@ -360,6 +367,36 @@ async function copyWindowsSubscriptionCommand(device: Device) {
 async function copyUnixSubscriptionCommand(device: Device) {
   const scriptUrl = `${device.subscriptionUrl}/scripts/install.sh`
   await copy(`curl -fsSL '${scriptUrl}' | sh`)
+}
+
+async function banDeviceById(deviceId: number) {
+  try {
+    const { value: reason } = await ElMessageBox.prompt('请输入封禁原因（可选）', '封禁设备', {
+      confirmButtonText: '封禁',
+      cancelButtonText: '取消',
+      inputPlaceholder: '原因',
+    })
+    await banDevice(deviceId, reason || '')
+    ElMessage.success('设备已封禁')
+    await loadAll()
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'cancel') ElMessage.error(error.message)
+  }
+}
+
+async function unbanDeviceById(deviceId: number) {
+  try {
+    await ElMessageBox.confirm('确定解除该设备的封禁吗？', '解除封禁', {
+      type: 'warning',
+      confirmButtonText: '解除',
+      cancelButtonText: '取消',
+    })
+    await unbanDevice(deviceId)
+    ElMessage.success('设备已解除封禁')
+    await loadAll()
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'cancel') ElMessage.error(error.message)
+  }
 }
 
 async function updateNodeMode(node: Node, accessMode: string) {
@@ -631,7 +668,10 @@ onUnmounted(() => {
           <article v-for="device in devices" :key="device.id" class="device-card">
             <div class="device-head">
               <div><span :class="['online-dot', { off: !device.online }]"></span><h3>{{ device.name }}</h3></div>
-              <el-tag :type="device.enabled ? 'success' : 'info'" effect="plain">{{ device.enabled ? '已启用' : '已禁用' }}</el-tag>
+              <div class="device-tags">
+                <el-tag :type="device.enabled ? 'success' : 'info'" effect="plain">{{ device.enabled ? '已启用' : '已禁用' }}</el-tag>
+                <el-tag v-if="device.banned" type="danger" effect="plain">已封禁</el-tag>
+              </div>
             </div>
             <code class="guid">{{ device.guid }}</code>
             <div class="field-label">订阅地址</div>
@@ -649,7 +689,13 @@ onUnmounted(() => {
               <span v-if="!device.permissionGroupNames.length" class="muted">当前权限组没有可用节点</span>
             </div>
             <div class="device-meta"><span>最后在线</span><b>{{ formatTime(device.lastSeenAt) }}</b></div>
+            <div v-if="device.banned" class="device-ban-note">
+              <el-tag type="danger" effect="plain" size="small">封禁中</el-tag>
+              <span>{{ device.banReason || '未填写原因' }}</span>
+            </div>
             <div class="card-actions">
+              <button v-if="!device.banned" @click="banDeviceById(device.id)">封禁</button>
+              <button v-else-if="device.canUnban" @click="unbanDeviceById(device.id)">解除封禁</button>
               <button @click="toggleDevice(device)">{{ device.enabled ? '禁用' : '启用' }}</button>
               <button class="danger" @click="deleteDevice(device)">删除</button>
             </div>
@@ -733,14 +779,46 @@ onUnmounted(() => {
       </template>
 
       <template v-else-if="active === 'online'">
-        <div class="action-row"><p>同一 GUID 可以同时出现在不同服务端；会话按节点和 GUID 区分。</p><el-button @click="loadAll">刷新</el-button></div>
-        <div class="table-panel">
+        <div class="action-row">
+          <el-radio-group v-model="onlineSub">
+            <el-radio-button value="list">在线列表</el-radio-button>
+            <el-radio-button value="blacklist">黑名单管理</el-radio-button>
+          </el-radio-group>
+          <el-button @click="loadAll">刷新</el-button>
+        </div>
+        <div v-if="onlineSub === 'list'" class="table-panel">
           <el-table :data="online">
             <el-table-column prop="guid" label="GUID" min-width="310"><template #default="{ row }"><code>{{ row.guid }}</code></template></el-table-column>
             <el-table-column label="节点" min-width="150"><template #default="{ row }">{{ nodeNames.get(row.nodeId) || `节点 ${row.nodeId}` }}</template></el-table-column>
             <el-table-column prop="remoteIp" label="来源 IP" min-width="150" />
             <el-table-column label="流量" min-width="150"><template #default="{ row }">↓ {{ formatBytes(row.rxBytes) }} · ↑ {{ formatBytes(row.txBytes) }}</template></el-table-column>
             <el-table-column label="最后心跳" min-width="180"><template #default="{ row }">{{ formatTime(row.lastHeartbeat) }}</template></el-table-column>
+            <el-table-column label="状态" width="120">
+              <template #default="{ row }">
+                <el-tag v-if="row.banned" type="danger">已封禁</el-tag>
+                <el-tag v-else type="success">正常</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button v-if="!row.banned && row.deviceId" text type="danger" @click="banDeviceById(row.deviceId)">封禁</el-button>
+                <el-button v-else-if="row.banned && row.canUnban && row.deviceId" text type="success" @click="unbanDeviceById(row.deviceId)">解除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <div v-else class="table-panel">
+          <el-table :data="deviceBans">
+            <el-table-column prop="guid" label="GUID" min-width="310"><template #default="{ row }"><code>{{ row.guid }}</code></template></el-table-column>
+            <el-table-column prop="deviceName" label="设备" min-width="150" />
+            <el-table-column prop="reason" label="原因" min-width="180" />
+            <el-table-column prop="username" label="封禁者" width="120" />
+            <el-table-column label="时间" width="180"><template #default="{ row }">{{ formatTime(row.createdAt) }}</template></el-table-column>
+            <el-table-column label="操作" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button text type="success" :disabled="!row.canUnban" @click="unbanDeviceById(row.deviceId)">解除</el-button>
+              </template>
+            </el-table-column>
           </el-table>
         </div>
       </template>

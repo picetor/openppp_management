@@ -84,6 +84,9 @@ func New(db *gorm.DB, cfg config.Config) http.Handler {
 			r.Delete("/devices/{deviceID}", server.deleteDevice)
 			r.Put("/devices/{deviceID}/nodes", server.assignDeviceNodes)
 			r.Post("/devices/{deviceID}/tokens", server.createSubscriptionToken)
+			r.Post("/devices/{deviceID}/ban", server.banDevice)
+			r.Post("/devices/{deviceID}/unban", server.unbanDevice)
+			r.Get("/device-bans", server.deviceBans)
 			r.Get("/nodes", server.nodes)
 			r.Get("/available-nodes", server.availableNodes)
 			r.Post("/nodes", server.adminOnly(server.createNode))
@@ -727,7 +730,10 @@ func (s *Server) deletePermissionGroup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)
-	query := s.db.Model(&model.Device{}).Where("user_id = ?", user.ID)
+	query := s.db.Model(&model.Device{})
+	if user.Role != "admin" {
+		query = query.Where("user_id = ?", user.ID)
+	}
 	var devices []model.Device
 	if err := query.Order("id DESC").Find(&devices).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "unable to load devices")
@@ -739,6 +745,11 @@ func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
 		PermissionGroupNames []string `json:"permissionGroupNames"`
 		Online               bool     `json:"online"`
 		SubscriptionURL      string   `json:"subscriptionUrl"`
+		Banned               bool     `json:"banned"`
+		BanReason            string   `json:"banReason"`
+		BanID                *uint64  `json:"banId"`
+		SelfBanned           bool     `json:"selfBanned"`
+		CanUnban             bool     `json:"canUnban"`
 	}
 	result := make([]item, 0, len(devices))
 	cutoff := time.Now().UTC().Add(-s.cfg.NodeOfflineAfter)
@@ -769,9 +780,23 @@ func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "unable to load subscription")
 			return
 		}
+		ban, err := s.activeDeviceBan(device.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "unable to load ban status")
+			return
+		}
+		banReason := ""
+		var banID *uint64
+		if ban != nil {
+			banReason = ban.Reason
+			banID = &ban.ID
+		}
 		result = append(result, item{
 			Device: device, NodeIDs: nodeIDs, PermissionGroupNames: groupNames, Online: count > 0,
 			SubscriptionURL: fmt.Sprintf("%s/sub/v1/%s", s.publicURL(), raw),
+			Banned: ban != nil, BanReason: banReason, BanID: banID,
+			SelfBanned: ban != nil && ban.BannedByUserID == user.ID,
+			CanUnban:   user.Role == "admin" || (ban != nil && ban.BannedByUserID == user.ID),
 		})
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -1224,7 +1249,71 @@ func (s *Server) online(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "unable to load online sessions")
 		return
 	}
-	writeJSON(w, http.StatusOK, sessions)
+
+	guidSet := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		guidSet = append(guidSet, session.GUID)
+	}
+
+	type deviceInfo struct {
+		ID     uint64
+		UserID uint64
+		GUID   string
+	}
+	deviceMap := make(map[string]deviceInfo)
+	if len(guidSet) > 0 {
+		var devices []model.Device
+		deviceQuery := s.db.Model(&model.Device{}).Where("guid IN ?", guidSet)
+		if user.Role != "admin" {
+			deviceQuery = deviceQuery.Where("user_id = ?", user.ID)
+		}
+		if err := deviceQuery.Find(&devices).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "unable to load devices")
+			return
+		}
+		for _, device := range devices {
+			deviceMap[device.GUID] = deviceInfo{ID: device.ID, UserID: device.UserID, GUID: device.GUID}
+		}
+	}
+
+	banMap := make(map[string]*model.DeviceBan)
+	if len(guidSet) > 0 {
+		var bans []model.DeviceBan
+		if err := s.db.Where("guid IN ? AND unbanned_at IS NULL", guidSet).Find(&bans).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "unable to load ban status")
+			return
+		}
+		for i := range bans {
+			banMap[bans[i].GUID] = &bans[i]
+		}
+	}
+
+	type item struct {
+		model.OnlineSession
+		DeviceID   uint64 `json:"deviceId"`
+		Banned     bool   `json:"banned"`
+		BanReason  string `json:"banReason"`
+		SelfBanned bool   `json:"selfBanned"`
+		CanUnban   bool   `json:"canUnban"`
+	}
+	result := make([]item, 0, len(sessions))
+	for _, session := range sessions {
+		device := deviceMap[session.GUID]
+		ban := banMap[session.GUID]
+		banReason := ""
+		if ban != nil {
+			banReason = ban.Reason
+		}
+		result = append(result, item{
+			OnlineSession: session,
+			DeviceID:      device.ID,
+			Banned:        ban != nil,
+			BanReason:     banReason,
+			SelfBanned:    ban != nil && ban.BannedByUserID == user.ID,
+			CanUnban:      user.Role == "admin" || (ban != nil && ban.BannedByUserID == user.ID),
+		})
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
@@ -1671,6 +1760,36 @@ func (s *Server) visibleSubscriptionToken(deviceID uint64) (string, error) {
 	return raw, err
 }
 
+func (s *Server) activeDeviceBan(deviceID uint64) (*model.DeviceBan, error) {
+	var ban model.DeviceBan
+	err := s.db.Where("device_id = ? AND unbanned_at IS NULL", deviceID).First(&ban).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ban, nil
+}
+
+func (s *Server) accessibleDevice(w http.ResponseWriter, r *http.Request) (*model.Device, bool) {
+	id, ok := pathID(w, r, "deviceID")
+	if !ok {
+		return nil, false
+	}
+	var device model.Device
+	if err := s.db.First(&device, id).Error; err != nil {
+		writeError(w, http.StatusNotFound, "device not found")
+		return nil, false
+	}
+	user := currentUser(r)
+	if user.Role != "admin" && device.UserID != user.ID {
+		writeError(w, http.StatusForbidden, "device does not belong to current user")
+		return nil, false
+	}
+	return &device, true
+}
+
 func (s *Server) ownedDevice(w http.ResponseWriter, r *http.Request) (*model.Device, bool) {
 	id, ok := pathID(w, r, "deviceID")
 	if !ok {
@@ -2108,3 +2227,111 @@ func writeIndentedJSON(w http.ResponseWriter, status int, value any) {
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{"error": message})
 }
+
+func (s *Server) banDevice(w http.ResponseWriter, r *http.Request) {
+	device, ok := s.accessibleDevice(w, r)
+	if !ok {
+		return
+	}
+	var input struct {
+		Reason string `json:"reason"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	user := currentUser(r)
+	existing, err := s.activeDeviceBan(device.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to check ban status")
+		return
+	}
+	if existing != nil {
+		writeError(w, http.StatusConflict, "device is already banned")
+		return
+	}
+	ban := model.DeviceBan{
+		DeviceID:       device.ID,
+		GUID:           device.GUID,
+		BannedByUserID: user.ID,
+		BannedByRole:   user.Role,
+		Reason:         strings.TrimSpace(input.Reason),
+	}
+	if err := s.db.Create(&ban).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to ban device")
+		return
+	}
+	writeJSON(w, http.StatusCreated, ban)
+}
+
+func (s *Server) unbanDevice(w http.ResponseWriter, r *http.Request) {
+	device, ok := s.accessibleDevice(w, r)
+	if !ok {
+		return
+	}
+	ban, err := s.activeDeviceBan(device.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to check ban status")
+		return
+	}
+	if ban == nil {
+		writeError(w, http.StatusNotFound, "device is not banned")
+		return
+	}
+	user := currentUser(r)
+	if user.Role != "admin" && ban.BannedByUserID != user.ID {
+		writeError(w, http.StatusForbidden, "only the user who banned this device or an administrator can unban it")
+		return
+	}
+	now := time.Now().UTC()
+	updates := map[string]any{
+		"unbanned_at":         now,
+		"unbanned_by_user_id": user.ID,
+	}
+	if err := s.db.Model(ban).Updates(updates).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to unban device")
+		return
+	}
+	ban.UnbannedAt = &now
+	ban.UnbannedByUserID = &user.ID
+	writeJSON(w, http.StatusOK, ban)
+}
+
+func (s *Server) deviceBans(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	query := s.db.Model(&model.DeviceBan{}).Where("unbanned_at IS NULL")
+	if user.Role != "admin" {
+		query = query.Joins("JOIN devices ON devices.id = device_bans.device_id").Where("devices.user_id = ?", user.ID)
+	}
+	var bans []model.DeviceBan
+	if err := query.Order("device_bans.id DESC").Find(&bans).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load bans")
+		return
+	}
+	type item struct {
+		model.DeviceBan
+		DeviceName string `json:"deviceName"`
+		Username   string `json:"username"`
+		SelfBanned bool   `json:"selfBanned"`
+		CanUnban   bool   `json:"canUnban"`
+	}
+	result := make([]item, 0, len(bans))
+	for _, ban := range bans {
+		var device model.Device
+		deviceName := ""
+		if err := s.db.First(&device, ban.DeviceID).Error; err == nil {
+			deviceName = device.Name
+		}
+		username := ""
+		var banner model.User
+		if err := s.db.First(&banner, ban.BannedByUserID).Error; err == nil {
+			username = banner.Username
+		}
+		result = append(result, item{
+			DeviceBan: ban, DeviceName: deviceName, Username: username,
+			SelfBanned: ban.BannedByUserID == user.ID,
+			CanUnban:   user.Role == "admin" || ban.BannedByUserID == user.ID,
+		})
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+

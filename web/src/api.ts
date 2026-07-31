@@ -18,6 +18,11 @@ export type Device = {
   permissionGroupNames: string[]
   subscriptionUrl: string
   lastSeenAt?: string
+  banned?: boolean
+  banReason?: string
+  banId?: number
+  selfBanned?: boolean
+  canUnban?: boolean
 }
 
 export type Node = {
@@ -65,6 +70,39 @@ export type OnlineSession = {
   txBytes: number
   connectedAt: string
   lastHeartbeat: string
+  deviceId?: number
+  banned?: boolean
+  banReason?: string
+  selfBanned?: boolean
+  canUnban?: boolean
+}
+
+export type DeviceBan = {
+  id: number
+  deviceId: number
+  guid: string
+  bannedByUserId: number
+  bannedByRole: 'admin' | 'user'
+  reason: string
+  unbannedAt?: string
+  unbannedByUserId?: number
+  createdAt: string
+  updatedAt: string
+}
+
+export async function banDevice(deviceId: number, reason: string): Promise<DeviceBan> {
+  return api<DeviceBan>(`/api/v1/devices/${deviceId}/ban`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export async function unbanDevice(deviceId: number): Promise<DeviceBan> {
+  return api<DeviceBan>(`/api/v1/devices/${deviceId}/unban`, { method: 'POST' })
+}
+
+export async function fetchDeviceBans(): Promise<DeviceBan[]> {
+  return api<DeviceBan[]>('/api/v1/device-bans')
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
