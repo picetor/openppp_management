@@ -134,6 +134,8 @@ async function bootstrap() {
   try {
     me.value = await api<User>('/api/v1/me')
     if (me.value.role !== 'admin' && ['groups', 'users', 'settings'].includes(active.value)) active.value = 'overview'
+    // 设备与订阅页默认显示当前用户的设备
+    if (isAdmin.value) deviceOwnerFilter.value = me.value.id
     await loadAll()
   } catch {
     me.value = null
@@ -150,6 +152,8 @@ async function signIn() {
       body: JSON.stringify(login),
     })
     if (me.value.role !== 'admin' && ['groups', 'users', 'settings'].includes(active.value)) active.value = 'overview'
+    // 设备与订阅页默认显示当前用户的设备
+    if (isAdmin.value) deviceOwnerFilter.value = me.value.id
     login.password = ''
     await loadAll()
   } catch (error) {
@@ -438,10 +442,14 @@ async function unbanDeviceById(deviceId: number) {
 }
 
 const filteredDevices = computed(() => {
-  if (isAdmin.value && deviceOwnerFilter.value !== undefined && deviceOwnerFilter.value > 0) {
-    return devices.value.filter((device) => device.userId === deviceOwnerFilter.value)
-  }
-  return devices.value
+  const filter = deviceOwnerFilter.value
+  // 非管理员：后端已限制仅返回自己的设备，这里再做一层防御
+  if (!isAdmin.value) return devices.value.filter((device) => device.userId === me.value?.id)
+  // 管理员：未筛选或筛选为当前用户时，默认显示自己的设备
+  if (filter === undefined || filter === me.value?.id) return devices.value.filter((device) => device.userId === me.value?.id)
+  // 0 = 全部设备
+  if (filter === 0) return devices.value
+  return devices.value.filter((device) => device.userId === filter)
 })
 const selectedDeviceCount = computed(() => deviceSelection.value.size)
 const selectedOnlineCount = computed(() => onlineSelection.value.length)
@@ -451,6 +459,17 @@ function toggleDeviceSelection(deviceId: number, checked: boolean) {
   if (checked) next.add(deviceId)
   else next.delete(deviceId)
   deviceSelection.value = next
+}
+const allDevicesSelected = computed(() => {
+  const list = filteredDevices.value
+  return list.length > 0 && list.every((device) => deviceSelection.value.has(device.id))
+})
+function toggleSelectAllDevices() {
+  if (allDevicesSelected.value) {
+    deviceSelection.value = new Set()
+  } else {
+    deviceSelection.value = new Set(filteredDevices.value.map((device) => device.id))
+  }
 }
 
 async function batchBanSelectedDevices() {
@@ -797,18 +816,20 @@ onUnmounted(() => {
         <div class="action-row">
           <p>每台设备固定一个 GUID，并拥有独立订阅地址。</p>
           <div v-if="isAdmin" class="device-filter">
-            <el-select v-model="deviceOwnerFilter" clearable filterable placeholder="筛选归属用户" style="width: 200px">
-              <el-option v-for="user in users" :key="user.id" :label="user.displayName || user.username" :value="user.id" />
+            <el-select v-model="deviceOwnerFilter" filterable style="width: 200px">
+              <el-option :value="0" label="全部设备" />
+              <el-option v-for="user in users" :key="user.id" :label="`${user.displayName || user.username}${user.id === me?.id ? '（我）' : ''}`" :value="user.id" />
             </el-select>
             <el-button type="primary" @click="deviceDialog = true">添加设备</el-button>
           </div>
           <el-button v-else type="primary" @click="deviceDialog = true">添加设备</el-button>
         </div>
-        <div v-if="selectedDeviceCount > 0" class="batch-bar">
+        <div v-if="filteredDevices.length > 0" class="batch-bar">
           <span>已选 {{ selectedDeviceCount }} 台设备</span>
-          <el-button type="danger" plain size="small" @click="batchBanSelectedDevices">批量封禁</el-button>
-          <el-button type="success" plain size="small" @click="batchUnbanSelectedDevices">批量解封</el-button>
-          <el-button text size="small" @click="deviceSelection = new Set()">清空</el-button>
+          <el-button size="small" @click="toggleSelectAllDevices">{{ allDevicesSelected ? '取消全选' : '全选' }}</el-button>
+          <el-button type="danger" plain size="small" :disabled="selectedDeviceCount === 0" @click="batchBanSelectedDevices">批量封禁</el-button>
+          <el-button type="success" plain size="small" :disabled="selectedDeviceCount === 0" @click="batchUnbanSelectedDevices">批量解封</el-button>
+          <el-button v-if="selectedDeviceCount > 0" text size="small" @click="deviceSelection = new Set()">清空</el-button>
         </div>
         <div class="card-list">
           <article v-for="device in filteredDevices" :key="device.id" class="device-card">
