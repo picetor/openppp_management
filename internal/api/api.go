@@ -1532,6 +1532,9 @@ func (s *Server) nodePolicy(w http.ResponseWriter, r *http.Request) {
 	for _, device := range disabledDevices {
 		blacklist = append(blacklist, device.GUID)
 	}
+	var bannedGUIDs []string
+	s.db.Model(&model.DeviceBan{}).Where("unbanned_at IS NULL").Distinct().Pluck("guid", &bannedGUIDs)
+	blacklist = append(blacklist, bannedGUIDs...)
 	if node.AccessMode == "whitelist" {
 		var devices []model.Device
 		whitelistDevicesQuery(s.db, node.ID).Distinct("devices.*").Find(&devices)
@@ -2260,6 +2263,7 @@ func (s *Server) banDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "unable to ban device")
 		return
 	}
+	s.bumpAllGroupPolicies()
 	writeJSON(w, http.StatusCreated, ban)
 }
 
@@ -2293,6 +2297,7 @@ func (s *Server) unbanDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	ban.UnbannedAt = &now
 	ban.UnbannedByUserID = &user.ID
+	s.bumpAllGroupPolicies()
 	writeJSON(w, http.StatusOK, ban)
 }
 
