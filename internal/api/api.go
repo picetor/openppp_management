@@ -393,12 +393,12 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Username     string    `json:"username"`
-		DisplayName  string    `json:"displayName"`
-		Password     string    `json:"password"`
-		Role         string    `json:"role"`
+		Username     string  `json:"username"`
+		DisplayName  string  `json:"displayName"`
+		Password     string  `json:"password"`
+		Role         string  `json:"role"`
 		GroupIDs     *[]uint64 `json:"groupIds"`
-		TrafficLimit int64     `json:"trafficLimit"`
+		TrafficLimit *int64  `json:"trafficLimit"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -415,12 +415,17 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	if input.Role != "admin" {
 		input.Role = "user"
 	}
-	if input.TrafficLimit == 0 {
-		input.TrafficLimit = -1 // 未指定或 0 视为不限量
+	limit := int64(-1) // 未指定时默认不限量
+	if input.TrafficLimit != nil {
+		limit = *input.TrafficLimit
+		if limit < -1 {
+			writeError(w, http.StatusBadRequest, "trafficLimit must be -1 (unlimited) or >= 0")
+			return
+		}
 	}
 	user := model.User{
 		Username: strings.TrimSpace(input.Username), DisplayName: strings.TrimSpace(input.DisplayName),
-		PasswordHash: hash, Role: input.Role, Enabled: true, TrafficLimit: input.TrafficLimit,
+		PasswordHash: hash, Role: input.Role, Enabled: true, TrafficLimit: limit,
 	}
 	if user.DisplayName == "" {
 		user.DisplayName = user.Username
@@ -493,8 +498,9 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.TrafficLimit != nil {
 		limit := *input.TrafficLimit
-		if limit == 0 {
-			limit = -1 // 0 视为不限量
+		if limit < -1 {
+			writeError(w, http.StatusBadRequest, "trafficLimit must be -1 (unlimited) or >= 0")
+			return
 		}
 		if user.TrafficLimit != limit {
 			if err := s.db.Model(&user).Update("traffic_limit", limit).Error; err != nil {
@@ -1630,10 +1636,10 @@ func (s *Server) nodePolicy(w http.ResponseWriter, r *http.Request) {
 	var bannedGUIDs []string
 	s.db.Model(&model.DeviceBan{}).Where("unbanned_at IS NULL").Distinct().Pluck("guid", &bannedGUIDs)
 	blacklist = append(blacklist, bannedGUIDs...)
-	// 流量超限用户：其全部设备（含新建）均拒绝通信
+	// 流量受限用户：0 表示无流量（禁止通信），>0 且已用量达到上限也停机；-1 不限量
 	var overLimitIDs []uint64
 	s.db.Model(&model.User{}).
-		Where("traffic_limit > 0 AND traffic_used >= traffic_limit").
+		Where("traffic_limit = 0 OR (traffic_limit > 0 AND traffic_used >= traffic_limit)").
 		Pluck("id", &overLimitIDs)
 	if len(overLimitIDs) > 0 {
 		var overDevices []model.Device

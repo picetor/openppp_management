@@ -208,19 +208,19 @@ function openCreateUser() {
 }
 
 async function setUserTraffic(user: User) {
-  const current = user.trafficLimit > 0 ? Math.round(user.trafficLimit / 1024 ** 3) : -1
+  const current = user.trafficLimit > 0 ? Math.round(user.trafficLimit / 1024 ** 3) : user.trafficLimit
   try {
     const { value } = await ElMessageBox.prompt(
-      `设置“${user.displayName}”的流量上限（GB）。已用 ${formatBytes(user.trafficUsed)}，上限 -1 表示不限量。`,
+      `设置“${user.displayName}”的流量上限（GB）。已用 ${formatBytes(user.trafficUsed)}，-1 表示不限量，0 表示无流量（禁止通信）。`,
       '设置流量上限',
       {
         confirmButtonText: '保存',
         cancelButtonText: '取消',
         inputValue: String(current),
-        inputPlaceholder: '例如 100，-1 表示不限量',
+        inputPlaceholder: '例如 100，-1 不限量，0 无流量',
         inputValidator: (raw: string) => {
           const gb = Number(raw.trim())
-          if (!Number.isFinite(gb) || gb < -1) return '请输入 -1 或大于等于 0 的数值（GB）'
+          if (!Number.isFinite(gb) || gb < -1) return '请输入 -1（不限量）、0（无流量）或正数（GB）'
           return true
         },
       },
@@ -1056,6 +1056,7 @@ onUnmounted(() => {
                   <span>{{ formatBytes(row.trafficUsed) }} / {{ formatBytes(row.trafficLimit) }}</span>
                   <el-tag v-if="row.trafficUsed >= row.trafficLimit" type="danger" size="small" effect="plain">已用尽</el-tag>
                 </div>
+                <span v-else-if="row.trafficLimit === 0" class="muted"><el-tag type="danger" size="small" effect="plain">无流量</el-tag></span>
                 <span v-else class="muted">不限量</span>
               </template>
             </el-table-column>
@@ -1133,7 +1134,7 @@ onUnmounted(() => {
       <el-form-item label="角色"><el-radio-group v-model="userForm.role"><el-radio value="user">普通用户</el-radio><el-radio value="admin">管理员</el-radio></el-radio-group></el-form-item>
       <el-form-item label="流量上限(GB)">
         <el-input-number v-model="userForm.trafficLimit" :min="-1" :step="10" style="width: 100%" />
-        <small class="table-sub">-1 表示不限量；达到上限后该用户全部设备（含新建）将停止通信</small>
+        <small class="table-sub">-1 表示不限量；0 表示无流量（该用户全部设备含新建均禁止通信）；达到上限后自动停机</small>
       </el-form-item>
       <el-form-item label="权限组">
         <el-select v-model="userForm.groupIds" multiple filterable class="wide" placeholder="选择用户所属权限组">
