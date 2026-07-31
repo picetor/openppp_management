@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  api, banDevice, unbanDevice, fetchDeviceBans,
+  api, banDevice, unbanDevice, batchBanDevices, batchUnbanDevices, fetchDeviceBans,
   type Device, type DeviceBan, type GUIDRule, type Node, type OnlineSession, type PermissionGroup, type User,
 } from './api'
 
@@ -55,6 +55,9 @@ const nodeForm = reactive({
 })
 const ruleForm = reactive({ guid: '', effect: 'deny', reason: '' })
 const groupForm = reactive({ key: '', name: '', enabled: true, nodeIds: [] as number[] })
+const deviceOwnerFilter = ref<number | undefined>(undefined)
+const deviceSelection = ref<Set<number>>(new Set())
+const onlineSelection = ref<OnlineSession[]>([])
 
 const isAdmin = computed(() => me.value?.role === 'admin')
 const nodeNames = computed(() => new Map(nodes.value.map((node) => [node.id, node.name])))
@@ -75,6 +78,9 @@ watch(active, (section) => {
     window.localStorage.setItem('openppp2.activeSection', section)
     if (window.location.hash !== `#/${section}`) window.location.hash = `/${section}`
   }
+})
+watch(deviceOwnerFilter, () => {
+  deviceSelection.value = new Set()
 })
 function applyTheme() {
   const dark = themeMode.value === 'dark' || (themeMode.value === 'system' && systemDarkMode.matches)
@@ -431,6 +437,102 @@ async function unbanDeviceById(deviceId: number) {
   }
 }
 
+const filteredDevices = computed(() => {
+  if (isAdmin.value && deviceOwnerFilter.value !== undefined && deviceOwnerFilter.value > 0) {
+    return devices.value.filter((device) => device.userId === deviceOwnerFilter.value)
+  }
+  return devices.value
+})
+const selectedDeviceCount = computed(() => deviceSelection.value.size)
+const selectedOnlineCount = computed(() => onlineSelection.value.length)
+
+function toggleDeviceSelection(deviceId: number, checked: boolean) {
+  const next = new Set(deviceSelection.value)
+  if (checked) next.add(deviceId)
+  else next.delete(deviceId)
+  deviceSelection.value = next
+}
+
+async function batchBanSelectedDevices() {
+  const ids = [...deviceSelection.value]
+  if (!ids.length) return
+  try {
+    const { value: reason } = await ElMessageBox.prompt(`将对选中的 ${ids.length} 台设备执行封禁。请输入封禁原因（可选）`, '批量封禁设备', {
+      confirmButtonText: '封禁',
+      cancelButtonText: '取消',
+      inputPlaceholder: '原因',
+    })
+    const { banned } = await batchBanDevices(ids, reason || '')
+    ElMessage.success(`已封禁 ${banned} 台设备`)
+    deviceSelection.value = new Set()
+    await loadAll()
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'cancel') ElMessage.error(error.message)
+  }
+}
+
+async function batchUnbanSelectedDevices() {
+  const ids = [...deviceSelection.value]
+  if (!ids.length) return
+  try {
+    await ElMessageBox.confirm(`确定解除选中的 ${ids.length} 台设备的封禁吗？`, '批量解除封禁', {
+      type: 'warning',
+      confirmButtonText: '解除',
+      cancelButtonText: '取消',
+    })
+    const { unbanned } = await batchUnbanDevices(ids)
+    ElMessage.success(`已解除 ${unbanned} 台设备的封禁`)
+    deviceSelection.value = new Set()
+    await loadAll()
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'cancel') ElMessage.error(error.message)
+  }
+}
+
+async function batchBanSelectedOnline() {
+  const rows = onlineSelection.value.filter((row) => row.deviceId && !row.banned)
+  const ids = [...new Set(rows.map((row) => row.deviceId!))]
+  if (!ids.length) {
+    ElMessage.warning('选中项中没有可封禁的设备')
+    return
+  }
+  try {
+    const { value: reason } = await ElMessageBox.prompt(`将对选中的 ${ids.length} 台设备执行封禁。请输入封禁原因（可选）`, '批量封禁在线设备', {
+      confirmButtonText: '封禁',
+      cancelButtonText: '取消',
+      inputPlaceholder: '原因',
+    })
+    const { banned } = await batchBanDevices(ids, reason || '')
+    ElMessage.success(`已封禁 ${banned} 台设备`)
+    onlineSelection.value = []
+    await loadAll()
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'cancel') ElMessage.error(error.message)
+  }
+}
+
+async function batchUnbanSelectedOnline() {
+  const rows = onlineSelection.value.filter((row) => row.deviceId && row.banned && row.canUnban)
+  const ids = [...new Set(rows.map((row) => row.deviceId!))]
+  if (!ids.length) {
+    ElMessage.warning('选中项中没有可解除封禁的设备')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确定解除选中的 ${ids.length} 台设备的封禁吗？`, '批量解除封禁', {
+      type: 'warning',
+      confirmButtonText: '解除',
+      cancelButtonText: '取消',
+    })
+    const { unbanned } = await batchUnbanDevices(ids)
+    ElMessage.success(`已解除 ${unbanned} 台设备的封禁`)
+    onlineSelection.value = []
+    await loadAll()
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'cancel') ElMessage.error(error.message)
+  }
+}
+
 async function updateNodeMode(node: Node, accessMode: string) {
   try {
     if (accessMode === node.accessMode) return
@@ -694,13 +796,30 @@ onUnmounted(() => {
       <template v-else-if="active === 'devices'">
         <div class="action-row">
           <p>每台设备固定一个 GUID，并拥有独立订阅地址。</p>
-          <el-button type="primary" @click="deviceDialog = true">添加设备</el-button>
+          <div v-if="isAdmin" class="device-filter">
+            <el-select v-model="deviceOwnerFilter" clearable filterable placeholder="筛选归属用户" style="width: 200px">
+              <el-option v-for="user in users" :key="user.id" :label="user.displayName || user.username" :value="user.id" />
+            </el-select>
+            <el-button type="primary" @click="deviceDialog = true">添加设备</el-button>
+          </div>
+          <el-button v-else type="primary" @click="deviceDialog = true">添加设备</el-button>
+        </div>
+        <div v-if="selectedDeviceCount > 0" class="batch-bar">
+          <span>已选 {{ selectedDeviceCount }} 台设备</span>
+          <el-button type="danger" plain size="small" @click="batchBanSelectedDevices">批量封禁</el-button>
+          <el-button type="success" plain size="small" @click="batchUnbanSelectedDevices">批量解封</el-button>
+          <el-button text size="small" @click="deviceSelection = new Set()">清空</el-button>
         </div>
         <div class="card-list">
-          <article v-for="device in devices" :key="device.id" class="device-card">
+          <article v-for="device in filteredDevices" :key="device.id" class="device-card">
             <div class="device-head">
+              <el-checkbox
+                :model-value="deviceSelection.has(device.id)"
+                @change="(checked: string | number | boolean) => toggleDeviceSelection(device.id, Boolean(checked))"
+              />
               <div><span :class="['online-dot', { off: !device.online }]"></span><h3>{{ device.name }}</h3></div>
               <div class="device-tags">
+                <el-tag v-if="isAdmin && device.ownerName" effect="plain" type="info">归属：{{ device.ownerName }}</el-tag>
                 <el-tag :type="device.enabled ? 'success' : 'info'" effect="plain">{{ device.enabled ? '已启用' : '已禁用' }}</el-tag>
                 <el-tag v-if="device.banned" type="danger" effect="plain">已封禁</el-tag>
               </div>
@@ -819,9 +938,17 @@ onUnmounted(() => {
           <el-button @click="loadAll">刷新</el-button>
         </div>
         <div v-if="onlineSub === 'list'" class="table-panel">
-          <el-table :data="online">
+          <div v-if="selectedOnlineCount > 0" class="batch-bar">
+            <span>已选 {{ selectedOnlineCount }} 条在线记录</span>
+            <el-button type="danger" plain size="small" @click="batchBanSelectedOnline">批量封禁</el-button>
+            <el-button type="success" plain size="small" @click="batchUnbanSelectedOnline">批量解封</el-button>
+            <el-button text size="small" @click="onlineSelection = []">清空</el-button>
+          </div>
+          <el-table :data="online" @selection-change="(rows: OnlineSession[]) => onlineSelection = rows">
+            <el-table-column type="selection" width="45" />
             <el-table-column prop="guid" label="GUID" min-width="310"><template #default="{ row }"><code>{{ row.guid }}</code></template></el-table-column>
             <el-table-column label="节点" min-width="150"><template #default="{ row }">{{ nodeNames.get(row.nodeId) || `节点 ${row.nodeId}` }}</template></el-table-column>
+            <el-table-column v-if="isAdmin" label="归属" min-width="110"><template #default="{ row }">{{ row.ownerName || '未知' }}</template></el-table-column>
             <el-table-column prop="remoteIp" label="来源 IP" min-width="150" />
             <el-table-column label="流量" min-width="150"><template #default="{ row }">↓ {{ formatBytes(row.rxBytes) }} · ↑ {{ formatBytes(row.txBytes) }}</template></el-table-column>
             <el-table-column label="最后心跳" min-width="180"><template #default="{ row }">{{ formatTime(row.lastHeartbeat) }}</template></el-table-column>

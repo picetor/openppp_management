@@ -80,6 +80,8 @@ func New(db *gorm.DB, cfg config.Config) http.Handler {
 			r.Delete("/permission-groups/{groupID}", server.adminOnly(server.deletePermissionGroup))
 			r.Get("/devices", server.devices)
 			r.Post("/devices", server.createDevice)
+			r.Post("/devices/batch-ban", server.batchBanDevices)
+			r.Post("/devices/batch-unban", server.batchUnbanDevices)
 			r.Patch("/devices/{deviceID}", server.updateDevice)
 			r.Delete("/devices/{deviceID}", server.deleteDevice)
 			r.Put("/devices/{deviceID}/nodes", server.assignDeviceNodes)
@@ -762,6 +764,8 @@ func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
 	}
 	type item struct {
 		model.Device
+		OwnerName            string   `json:"ownerName"`
+		DuplicateGUID        bool     `json:"duplicateGUID"`
 		NodeIDs              []uint64 `json:"nodeIds"`
 		PermissionGroupNames []string `json:"permissionGroupNames"`
 		Online               bool     `json:"online"`
@@ -771,6 +775,40 @@ func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
 		BanID                *uint64  `json:"banId"`
 		SelfBanned           bool     `json:"selfBanned"`
 		CanUnban             bool     `json:"canUnban"`
+	}
+	ownerNames := map[uint64]string{}
+	{
+		userIDs := make([]uint64, 0, len(devices))
+		for _, device := range devices {
+			userIDs = append(userIDs, device.UserID)
+		}
+		if len(userIDs) > 0 {
+			var owners []model.User
+			if err := s.db.Where("id IN ?", userIDs).Find(&owners).Error; err != nil {
+				writeError(w, http.StatusInternalServerError, "unable to load device owners")
+				return
+			}
+			for _, owner := range owners {
+				name := owner.DisplayName
+				if name == "" {
+					name = owner.Username
+				}
+				ownerNames[owner.ID] = name
+			}
+		}
+	}
+	// 检测重复 GUID（历史遗留数据），前端据此提示串号风险
+	duplicateGUIDs := map[string]bool{}
+	{
+		guidCounts := map[string]int{}
+		for _, device := range devices {
+			guidCounts[device.GUID]++
+		}
+		for guid, count := range guidCounts {
+			if count > 1 {
+				duplicateGUIDs[guid] = true
+			}
+		}
 	}
 	result := make([]item, 0, len(devices))
 	cutoff := time.Now().UTC().Add(-s.cfg.NodeOfflineAfter)
@@ -813,7 +851,8 @@ func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
 			banID = &ban.ID
 		}
 		result = append(result, item{
-			Device: device, NodeIDs: nodeIDs, PermissionGroupNames: groupNames, Online: count > 0,
+			Device: device, OwnerName: ownerNames[device.UserID], DuplicateGUID: duplicateGUIDs[device.GUID],
+			NodeIDs: nodeIDs, PermissionGroupNames: groupNames, Online: count > 0,
 			SubscriptionURL: fmt.Sprintf("%s/sub/v1/%s", s.publicURL(), raw),
 			Banned: ban != nil, BanReason: banReason, BanID: banID,
 			SelfBanned: ban != nil && ban.BannedByUserID == user.ID,
@@ -844,6 +883,13 @@ func (s *Server) createDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// GUID 全局唯一：防止复制他人 GUID 导致会话/流量/封禁串号
+	var guidCount int64
+	s.db.Model(&model.Device{}).Where("guid = ?", input.GUID).Count(&guidCount)
+	if guidCount > 0 {
+		writeError(w, http.StatusConflict, "GUID is already in use by another device")
 		return
 	}
 	device := model.Device{UserID: user.ID, Name: strings.TrimSpace(input.Name), GUID: input.GUID, Enabled: true}
@@ -1297,6 +1343,32 @@ func (s *Server) online(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	ownerNames := map[uint64]string{}
+	if user.Role == "admin" {
+		userIDs := make([]uint64, 0, len(deviceMap))
+		seen := map[uint64]bool{}
+		for _, info := range deviceMap {
+			if !seen[info.UserID] {
+				seen[info.UserID] = true
+				userIDs = append(userIDs, info.UserID)
+			}
+		}
+		if len(userIDs) > 0 {
+			var owners []model.User
+			if err := s.db.Where("id IN ?", userIDs).Find(&owners).Error; err != nil {
+				writeError(w, http.StatusInternalServerError, "unable to load device owners")
+				return
+			}
+			for _, owner := range owners {
+				name := owner.DisplayName
+				if name == "" {
+					name = owner.Username
+				}
+				ownerNames[owner.ID] = name
+			}
+		}
+	}
+
 	banMap := make(map[string]*model.DeviceBan)
 	if len(guidSet) > 0 {
 		var bans []model.DeviceBan
@@ -1312,6 +1384,7 @@ func (s *Server) online(w http.ResponseWriter, r *http.Request) {
 	type item struct {
 		model.OnlineSession
 		DeviceID   uint64 `json:"deviceId"`
+		OwnerName  string `json:"ownerName"`
 		Banned     bool   `json:"banned"`
 		BanReason  string `json:"banReason"`
 		SelfBanned bool   `json:"selfBanned"`
@@ -1328,6 +1401,7 @@ func (s *Server) online(w http.ResponseWriter, r *http.Request) {
 		result = append(result, item{
 			OnlineSession: session,
 			DeviceID:      device.ID,
+			OwnerName:     ownerNames[device.UserID],
 			Banned:        ban != nil,
 			BanReason:     banReason,
 			SelfBanned:    ban != nil && ban.BannedByUserID == user.ID,
@@ -2276,6 +2350,97 @@ func writeIndentedJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{"error": message})
+}
+
+func (s *Server) batchBanDevices(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		IDs    []uint64 `json:"ids"`
+		Reason string   `json:"reason"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if len(input.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "device ids are required")
+		return
+	}
+	user := currentUser(r)
+	query := s.db.Model(&model.Device{})
+	if user.Role != "admin" {
+		query = query.Where("user_id = ?", user.ID)
+	}
+	var devices []model.Device
+	if err := query.Where("id IN ?", input.IDs).Find(&devices).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load devices")
+		return
+	}
+	reason := strings.TrimSpace(input.Reason)
+	banned := 0
+	for _, device := range devices {
+		existing, err := s.activeDeviceBan(device.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "unable to check ban status")
+			return
+		}
+		if existing != nil {
+			continue
+		}
+		ban := model.DeviceBan{
+			DeviceID:       device.ID,
+			GUID:           device.GUID,
+			BannedByUserID: user.ID,
+			BannedByRole:   user.Role,
+			Reason:         reason,
+		}
+		if err := s.db.Create(&ban).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "unable to ban device")
+			return
+		}
+		banned++
+	}
+	if banned > 0 {
+		s.bumpAllGroupPolicies()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"banned": banned})
+}
+
+func (s *Server) batchUnbanDevices(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		IDs []uint64 `json:"ids"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if len(input.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "device ids are required")
+		return
+	}
+	user := currentUser(r)
+	query := s.db.Model(&model.DeviceBan{}).Where("unbanned_at IS NULL")
+	if user.Role != "admin" {
+		query = query.Where("banned_by_user_id = ?", user.ID)
+	}
+	var bans []model.DeviceBan
+	if err := query.Where("device_id IN ?", input.IDs).Find(&bans).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load bans")
+		return
+	}
+	now := time.Now().UTC()
+	unbanned := 0
+	for _, ban := range bans {
+		if err := s.db.Model(&ban).Updates(map[string]any{
+			"unbanned_at":         now,
+			"unbanned_by_user_id": user.ID,
+		}).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "unable to unban device")
+			return
+		}
+		unbanned++
+	}
+	if unbanned > 0 {
+		s.bumpAllGroupPolicies()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"unbanned": unbanned})
 }
 
 func (s *Server) banDevice(w http.ResponseWriter, r *http.Request) {

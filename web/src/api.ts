@@ -20,6 +20,7 @@ export type Device = {
   permissionGroupNames: string[]
   subscriptionUrl: string
   lastSeenAt?: string
+  ownerName?: string
   banned?: boolean
   banReason?: string
   banId?: number
@@ -73,6 +74,7 @@ export type OnlineSession = {
   connectedAt: string
   lastHeartbeat: string
   deviceId?: number
+  ownerName?: string
   banned?: boolean
   banReason?: string
   selfBanned?: boolean
@@ -101,6 +103,20 @@ export async function banDevice(deviceId: number, reason: string): Promise<Devic
 
 export async function unbanDevice(deviceId: number): Promise<DeviceBan> {
   return api<DeviceBan>(`/api/v1/devices/${deviceId}/unban`, { method: 'POST' })
+}
+
+export async function batchBanDevices(ids: number[], reason: string): Promise<{ banned: number }> {
+  return api<{ banned: number }>('/api/v1/devices/batch-ban', {
+    method: 'POST',
+    body: JSON.stringify({ ids, reason }),
+  })
+}
+
+export async function batchUnbanDevices(ids: number[]): Promise<{ unbanned: number }> {
+  return api<{ unbanned: number }>('/api/v1/devices/batch-unban', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  })
 }
 
 export async function fetchDeviceBans(): Promise<DeviceBan[]> {

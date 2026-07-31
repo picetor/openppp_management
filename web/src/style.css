@@ -84,9 +84,12 @@ code { font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
 
 .action-row { margin-bottom: 20px; }
 .action-row p { color: var(--muted); margin: 0; }
+.device-filter { display: flex; align-items: center; gap: 10px; }
+.batch-bar { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; }
+.batch-bar span { color: var(--muted); }
 .card-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
 .device-card, .add-card { background: white; border: 1px solid var(--line); border-radius: 15px; padding: 22px; min-height: 260px; }
-.device-head { display: flex; align-items: center; justify-content: space-between; }
+.device-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .device-head > div { display: flex; align-items: center; gap: 12px; }
 .device-head .device-tags { display: flex; align-items: center; gap: 8px; }
 .device-head h3 { margin: 0; }
