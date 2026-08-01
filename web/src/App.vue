@@ -55,6 +55,7 @@ const nodeForm = reactive({
 })
 const ruleForm = reactive({ guid: '', effect: 'deny', reason: '' })
 const groupForm = reactive({ key: '', name: '', enabled: true, nodeIds: [] as number[] })
+const trafficDrafts = reactive<Record<number, string>>({})
 const deviceOwnerFilter = ref<number | undefined>(undefined)
 const deviceSelection = ref<Set<number>>(new Set())
 const onlineSelection = ref<OnlineSession[]>([])
@@ -207,31 +208,31 @@ function openCreateUser() {
   userDialog.value = true
 }
 
-async function setUserTraffic(user: User) {
-  const current = user.trafficLimit > 0 ? Math.round(user.trafficLimit / 1024 ** 3) : user.trafficLimit
+function trafficLimitGb(user: User) {
+  return user.trafficLimit > 0 ? String(Math.round(user.trafficLimit / 1024 ** 3)) : String(user.trafficLimit)
+}
+
+function trafficDraft(user: User) {
+  if (trafficDrafts[user.id] === undefined) trafficDrafts[user.id] = trafficLimitGb(user)
+  return trafficDrafts[user.id]
+}
+
+async function updateUserTraffic(user: User) {
+  const gb = Number(trafficDraft(user).trim())
+  if (!Number.isFinite(gb) || gb < -1) {
+    trafficDrafts[user.id] = trafficLimitGb(user)
+    ElMessage.error('请输入 -1（不限量）、0（无流量）或正数（GB）')
+    return
+  }
+  const trafficLimit = gb === -1 ? -1 : Math.round(gb * 1024 ** 3)
   try {
-    const { value } = await ElMessageBox.prompt(
-      `设置“${user.displayName}”的流量上限（GB）。已用 ${formatBytes(user.trafficUsed)}，-1 表示不限量，0 表示无流量（禁止通信）。`,
-      '设置流量上限',
-      {
-        confirmButtonText: '保存',
-        cancelButtonText: '取消',
-        inputValue: String(current),
-        inputPlaceholder: '例如 100，-1 不限量，0 无流量',
-        inputValidator: (raw: string) => {
-          const gb = Number(raw.trim())
-          if (!Number.isFinite(gb) || gb < -1) return '请输入 -1（不限量）、0（无流量）或正数（GB）'
-          return true
-        },
-      },
-    )
-    const gb = Number(value.trim())
-    const trafficLimit = gb === -1 ? -1 : Math.round(gb * 1024 ** 3)
     await api(`/api/v1/users/${user.id}`, { method: 'PATCH', body: JSON.stringify({ trafficLimit }) })
     await loadAll()
+    trafficDrafts[user.id] = String(gb)
     ElMessage.success('流量上限已更新')
   } catch (error) {
-    if (error instanceof Error && error.message !== 'cancel') ElMessage.error(error.message)
+    trafficDrafts[user.id] = trafficLimitGb(user)
+    ElMessage.error((error as Error).message)
   }
 }
 
@@ -1104,27 +1105,30 @@ onUnmounted(() => {
             <el-table-column prop="displayName" label="名称" />
             <el-table-column prop="username" label="用户名" />
             <el-table-column label="角色"><template #default="{ row }">{{ row.role === 'admin' ? '管理员' : '用户' }}</template></el-table-column>
-            <el-table-column label="权限组" min-width="260">
+            <el-table-column label="权限组" min-width="210">
               <template #default="{ row }">
-                <el-select :model-value="row.groupIds" multiple filterable class="wide" placeholder="选择权限组" @change="(value: number[]) => assignUserGroups(row, value)">
+                <el-select :model-value="row.groupIds" multiple collapse-tags :max-collapse-tags="1" filterable class="wide" placeholder="选择权限组" @change="(value: number[]) => assignUserGroups(row, value)">
                   <el-option v-for="group in permissionGroups" :key="group.id" :label="group.name" :value="group.id" />
                 </el-select>
               </template>
             </el-table-column>
             <el-table-column label="状态"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '禁用' }}</el-tag></template></el-table-column>
-            <el-table-column label="流量" min-width="170">
+            <el-table-column label="流量上限（GB）" min-width="230">
               <template #default="{ row }">
-                <div v-if="row.trafficLimit > 0" class="traffic-cell" :class="{ over: row.trafficUsed >= row.trafficLimit }">
-                  <span>{{ formatBytes(row.trafficUsed) }} / {{ formatBytes(row.trafficLimit) }}</span>
-                  <el-tag v-if="row.trafficUsed >= row.trafficLimit" type="danger" size="small" effect="plain">已用尽</el-tag>
+                <div class="traffic-editor" :class="{ over: row.trafficLimit >= 0 && row.trafficUsed >= row.trafficLimit }">
+                  <el-input
+                    :model-value="trafficDraft(row)"
+                    :disabled="row.id === me?.id"
+                    size="small"
+                    @update:model-value="(value: string) => trafficDrafts[row.id] = value"
+                    @change="updateUserTraffic(row)"
+                  />
+                  <small>已用 {{ formatBytes(row.trafficUsed) }} · -1 不限 · 0 禁用</small>
                 </div>
-                <span v-else-if="row.trafficLimit === 0" class="muted"><el-tag type="danger" size="small" effect="plain">无流量</el-tag></span>
-                <span v-else class="muted">不限量</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="210" fixed="right">
+            <el-table-column label="操作" width="150" fixed="right">
               <template #default="{ row }">
-                <el-button text type="primary" :disabled="row.id === me?.id" @click="setUserTraffic(row)">流量</el-button>
                 <el-button text :type="row.enabled ? 'warning' : 'success'" :disabled="row.id === me?.id" @click="toggleUser(row)">{{ row.enabled ? '封禁' : '启用' }}</el-button>
                 <el-button text type="danger" :disabled="row.id === me?.id" @click="deleteUser(row)">删除</el-button>
               </template>

@@ -94,9 +94,10 @@ code { font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
 .device-head .device-tags { display: flex; align-items: center; gap: 8px; }
 .device-head h3 { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .device-ban-note { display: flex; align-items: center; gap: 8px; margin: 14px 0; color: #d9475a; font-size: 12px; }
-.traffic-cell { display: flex; align-items: center; gap: 6px; color: var(--text); }
-.traffic-cell.over { color: #d9475a; font-weight: 600; }
-html.dark .traffic-cell.over { color: #f0717e; }
+.traffic-editor { display: grid; grid-template-columns: 82px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--text); }
+.traffic-editor small { color: var(--muted); white-space: nowrap; }
+.traffic-editor.over small { color: #d9475a; font-weight: 600; }
+html.dark .traffic-editor.over small { color: #f0717e; }
 .guid { display: block; background: #f3f6fa; color: #445168; padding: 11px; border-radius: 8px; margin: 19px 0; overflow-x: auto; font-size: 12px; }
 .field-label { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
 .subscription-address { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; margin-bottom: 16px; }
