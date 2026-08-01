@@ -82,6 +82,8 @@ func New(db *gorm.DB, cfg config.Config) http.Handler {
 			r.Post("/devices", server.createDevice)
 			r.Post("/devices/batch-ban", server.batchBanDevices)
 			r.Post("/devices/batch-unban", server.batchUnbanDevices)
+			r.Post("/guid-bans/batch", server.adminOnly(server.batchBanGuids))
+			r.Post("/guid-bans/unban", server.adminOnly(server.batchUnbanGuids))
 			r.Patch("/devices/{deviceID}", server.updateDevice)
 			r.Delete("/devices/{deviceID}", server.deleteDevice)
 			r.Put("/devices/{deviceID}/nodes", server.assignDeviceNodes)
@@ -2439,6 +2441,136 @@ func (s *Server) batchUnbanDevices(w http.ResponseWriter, r *http.Request) {
 			"unbanned_by_user_id": user.ID,
 		}).Error; err != nil {
 			writeError(w, http.StatusInternalServerError, "unable to unban device")
+			return
+		}
+		unbanned++
+	}
+	if unbanned > 0 {
+		s.bumpAllGroupPolicies()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"unbanned": unbanned})
+}
+
+// batchBanGuids 按 GUID 封禁（admin 专用），支持封禁无归属设备的 GUID。
+func (s *Server) batchBanGuids(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Guids  []string `json:"guids"`
+		Reason string   `json:"reason"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if len(input.Guids) == 0 {
+		writeError(w, http.StatusBadRequest, "guids are required")
+		return
+	}
+	user := currentUser(r)
+	normalized := make([]string, 0, len(input.Guids))
+	for _, g := range input.Guids {
+		guid := strings.TrimSpace(g)
+		if guid == "" {
+			continue
+		}
+		normalizedGuid, err := security.NormalizeGUID(guid)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		normalized = append(normalized, normalizedGuid)
+	}
+	if len(normalized) == 0 {
+		writeError(w, http.StatusBadRequest, "valid guids are required")
+		return
+	}
+	// 已有未解封记录则跳过，避免重复封禁
+	var existing []model.DeviceBan
+	if err := s.db.Where("guid IN ? AND unbanned_at IS NULL", normalized).Find(&existing).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to check ban status")
+		return
+	}
+	existingSet := map[string]bool{}
+	for _, ban := range existing {
+		existingSet[ban.GUID] = true
+	}
+	// 若 GUID 已注册设备则冗余记录 DeviceID，便于黑名单管理页展示设备名
+	var devices []model.Device
+	s.db.Where("guid IN ?", normalized).Find(&devices)
+	deviceIDByGUID := map[string]uint64{}
+	for _, device := range devices {
+		deviceIDByGUID[device.GUID] = device.ID
+	}
+	reason := strings.TrimSpace(input.Reason)
+	banned := 0
+	for _, guid := range normalized {
+		if existingSet[guid] {
+			continue
+		}
+		ban := model.DeviceBan{
+			DeviceID:       deviceIDByGUID[guid],
+			GUID:           guid,
+			BannedByUserID: user.ID,
+			BannedByRole:   user.Role,
+			Reason:         reason,
+		}
+		if err := s.db.Create(&ban).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "unable to ban guid")
+			return
+		}
+		banned++
+	}
+	if banned > 0 {
+		s.bumpAllGroupPolicies()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"banned": banned})
+}
+
+// batchUnbanGuids 按 GUID 解除封禁（admin 专用）。
+func (s *Server) batchUnbanGuids(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Guids []string `json:"guids"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if len(input.Guids) == 0 {
+		writeError(w, http.StatusBadRequest, "guids are required")
+		return
+	}
+	user := currentUser(r)
+	normalized := make([]string, 0, len(input.Guids))
+	for _, g := range input.Guids {
+		guid := strings.TrimSpace(g)
+		if guid == "" {
+			continue
+		}
+		normalizedGuid, err := security.NormalizeGUID(guid)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		normalized = append(normalized, normalizedGuid)
+	}
+	if len(normalized) == 0 {
+		writeError(w, http.StatusBadRequest, "valid guids are required")
+		return
+	}
+	query := s.db.Model(&model.DeviceBan{}).Where("guid IN ? AND unbanned_at IS NULL", normalized)
+	if user.Role != "admin" {
+		query = query.Where("banned_by_user_id = ?", user.ID)
+	}
+	var bans []model.DeviceBan
+	if err := query.Find(&bans).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load bans")
+		return
+	}
+	now := time.Now().UTC()
+	unbanned := 0
+	for _, ban := range bans {
+		if err := s.db.Model(&ban).Updates(map[string]any{
+			"unbanned_at":         now,
+			"unbanned_by_user_id": user.ID,
+		}).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "unable to unban guid")
 			return
 		}
 		unbanned++

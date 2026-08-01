@@ -92,6 +92,10 @@ export type DeviceBan = {
   unbannedByUserId?: number
   createdAt: string
   updatedAt: string
+  deviceName?: string
+  username?: string
+  selfBanned?: boolean
+  canUnban?: boolean
 }
 
 export async function banDevice(deviceId: number, reason: string): Promise<DeviceBan> {
@@ -116,6 +120,20 @@ export async function batchUnbanDevices(ids: number[]): Promise<{ unbanned: numb
   return api<{ unbanned: number }>('/api/v1/devices/batch-unban', {
     method: 'POST',
     body: JSON.stringify({ ids }),
+  })
+}
+
+export async function batchBanGuids(guids: string[], reason: string): Promise<{ banned: number }> {
+  return api<{ banned: number }>('/api/v1/guid-bans/batch', {
+    method: 'POST',
+    body: JSON.stringify({ guids, reason }),
+  })
+}
+
+export async function batchUnbanGuids(guids: string[]): Promise<{ unbanned: number }> {
+  return api<{ unbanned: number }>('/api/v1/guid-bans/unban', {
+    method: 'POST',
+    body: JSON.stringify({ guids }),
   })
 }
 

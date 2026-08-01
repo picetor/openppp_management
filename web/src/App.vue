@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  api, banDevice, unbanDevice, batchBanDevices, batchUnbanDevices, fetchDeviceBans,
+  api, banDevice, unbanDevice, batchBanDevices, batchUnbanDevices, batchBanGuids, batchUnbanGuids, fetchDeviceBans,
   type Device, type DeviceBan, type GUIDRule, type Node, type OnlineSession, type PermissionGroup, type User,
 } from './api'
 
@@ -441,6 +441,44 @@ async function unbanDeviceById(deviceId: number) {
   }
 }
 
+async function banGuid(guid: string) {
+  try {
+    const { value: reason } = await ElMessageBox.prompt('该 GUID 无归属设备，将直接加入黑名单。请输入封禁原因（可选）', '封禁 GUID', {
+      confirmButtonText: '封禁',
+      cancelButtonText: '取消',
+      inputPlaceholder: '原因',
+    })
+    const { banned } = await batchBanGuids([guid], reason || '')
+    if (banned === 0) {
+      ElMessage.info('该 GUID 已在封禁名单中')
+    } else {
+      ElMessage.success('GUID 已封禁')
+    }
+    await loadAll()
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'cancel') ElMessage.error(error.message)
+  }
+}
+
+async function unbanGuid(guid: string) {
+  try {
+    await ElMessageBox.confirm('确定解除该 GUID 的封禁吗？', '解除封禁', {
+      type: 'warning',
+      confirmButtonText: '解除',
+      cancelButtonText: '取消',
+    })
+    const { unbanned } = await batchUnbanGuids([guid])
+    if (unbanned === 0) {
+      ElMessage.info('该 GUID 不在封禁名单中')
+    } else {
+      ElMessage.success('GUID 已解除封禁')
+    }
+    await loadAll()
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'cancel') ElMessage.error(error.message)
+  }
+}
+
 const filteredDevices = computed(() => {
   const filter = deviceOwnerFilter.value
   // 非管理员：后端已限制仅返回自己的设备，这里再做一层防御
@@ -509,20 +547,32 @@ async function batchUnbanSelectedDevices() {
 }
 
 async function batchBanSelectedOnline() {
-  const rows = onlineSelection.value.filter((row) => row.deviceId && !row.banned)
-  const ids = [...new Set(rows.map((row) => row.deviceId!))]
-  if (!ids.length) {
+  const rows = onlineSelection.value.filter((row) => !row.banned)
+  const deviceRows = rows.filter((row) => row.deviceId)
+  const guidRows = rows.filter((row) => !row.deviceId)
+  const ids = [...new Set(deviceRows.map((row) => row.deviceId!))]
+  const guids = [...new Set(guidRows.map((row) => row.guid))]
+  const total = ids.length + guids.length
+  if (!total) {
     ElMessage.warning('选中项中没有可封禁的设备')
     return
   }
   try {
-    const { value: reason } = await ElMessageBox.prompt(`将对选中的 ${ids.length} 台设备执行封禁。请输入封禁原因（可选）`, '批量封禁在线设备', {
+    const { value: reason } = await ElMessageBox.prompt(`将对选中的 ${total} 条记录执行封禁。请输入封禁原因（可选）`, '批量封禁在线设备', {
       confirmButtonText: '封禁',
       cancelButtonText: '取消',
       inputPlaceholder: '原因',
     })
-    const { banned } = await batchBanDevices(ids, reason || '')
-    ElMessage.success(`已封禁 ${banned} 台设备`)
+    let banned = 0
+    if (ids.length) {
+      const res = await batchBanDevices(ids, reason || '')
+      banned += res.banned
+    }
+    if (guids.length) {
+      const res = await batchBanGuids(guids, reason || '')
+      banned += res.banned
+    }
+    ElMessage.success(`已封禁 ${banned} 条记录`)
     onlineSelection.value = []
     await loadAll()
   } catch (error) {
@@ -531,20 +581,32 @@ async function batchBanSelectedOnline() {
 }
 
 async function batchUnbanSelectedOnline() {
-  const rows = onlineSelection.value.filter((row) => row.deviceId && row.banned && row.canUnban)
-  const ids = [...new Set(rows.map((row) => row.deviceId!))]
-  if (!ids.length) {
+  const rows = onlineSelection.value.filter((row) => row.banned && row.canUnban)
+  const deviceRows = rows.filter((row) => row.deviceId)
+  const guidRows = rows.filter((row) => !row.deviceId)
+  const ids = [...new Set(deviceRows.map((row) => row.deviceId!))]
+  const guids = [...new Set(guidRows.map((row) => row.guid))]
+  const total = ids.length + guids.length
+  if (!total) {
     ElMessage.warning('选中项中没有可解除封禁的设备')
     return
   }
   try {
-    await ElMessageBox.confirm(`确定解除选中的 ${ids.length} 台设备的封禁吗？`, '批量解除封禁', {
+    await ElMessageBox.confirm(`确定解除选中的 ${total} 条记录的封禁吗？`, '批量解除封禁', {
       type: 'warning',
       confirmButtonText: '解除',
       cancelButtonText: '取消',
     })
-    const { unbanned } = await batchUnbanDevices(ids)
-    ElMessage.success(`已解除 ${unbanned} 台设备的封禁`)
+    let unbanned = 0
+    if (ids.length) {
+      const res = await batchUnbanDevices(ids)
+      unbanned += res.unbanned
+    }
+    if (guids.length) {
+      const res = await batchUnbanGuids(guids)
+      unbanned += res.unbanned
+    }
+    ElMessage.success(`已解除 ${unbanned} 条记录的封禁`)
     onlineSelection.value = []
     await loadAll()
   } catch (error) {
@@ -981,8 +1043,8 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column label="操作" width="120" fixed="right">
               <template #default="{ row }">
-                <el-button v-if="!row.banned && row.deviceId" text type="danger" @click="banDeviceById(row.deviceId)">封禁</el-button>
-                <el-button v-else-if="row.banned && row.canUnban && row.deviceId" text type="success" @click="unbanDeviceById(row.deviceId)">解除</el-button>
+                <el-button v-if="!row.banned && (row.deviceId || isAdmin)" text type="danger" @click="row.deviceId ? banDeviceById(row.deviceId) : banGuid(row.guid)">封禁</el-button>
+                <el-button v-else-if="row.banned && row.canUnban && (row.deviceId || isAdmin)" text type="success" @click="row.deviceId ? unbanDeviceById(row.deviceId) : unbanGuid(row.guid)">解除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -990,13 +1052,13 @@ onUnmounted(() => {
         <div v-else class="table-panel">
           <el-table :data="deviceBans">
             <el-table-column prop="guid" label="GUID" min-width="310"><template #default="{ row }"><code>{{ row.guid }}</code></template></el-table-column>
-            <el-table-column prop="deviceName" label="设备" min-width="150" />
+            <el-table-column label="设备" min-width="150"><template #default="{ row }">{{ row.deviceName || '无归属' }}</template></el-table-column>
             <el-table-column prop="reason" label="原因" min-width="180" />
             <el-table-column prop="username" label="封禁者" width="120" />
             <el-table-column label="时间" width="180"><template #default="{ row }">{{ formatTime(row.createdAt) }}</template></el-table-column>
             <el-table-column label="操作" width="120" fixed="right">
               <template #default="{ row }">
-                <el-button text type="success" :disabled="!row.canUnban" @click="unbanDeviceById(row.deviceId)">解除</el-button>
+                <el-button text type="success" :disabled="!row.canUnban" @click="row.deviceId ? unbanDeviceById(row.deviceId) : unbanGuid(row.guid)">解除</el-button>
               </template>
             </el-table-column>
           </el-table>
