@@ -37,9 +37,9 @@ export type Node = {
   accessMode: 'blacklist' | 'whitelist'
   duplicateGuidPolicy: 'replace_old' | 'reject_new'
   configJson: string
-  policyRevision: number
   groupIds: number[]
   whitelistGuidCount: number
+  onlineGuidCount: number
   configReady: boolean
   lastSeenAt?: string
   lastIp?: string

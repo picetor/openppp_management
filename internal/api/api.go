@@ -1050,10 +1050,30 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "unable to load nodes")
 		return
 	}
+	// 在线 GUID 数：每个节点当前未断开且心跳新鲜的会话，按节点去重 GUID 统计。
+	cutoff := time.Now().UTC().Add(-s.cfg.NodeOfflineAfter)
+	type onlineCount struct {
+		NodeID   uint64
+		GuidCount int64
+	}
+	var onlineCounts []onlineCount
+	if err := s.db.Model(&model.OnlineSession{}).
+		Select("node_id, COUNT(DISTINCT guid) AS guid_count").
+		Where("disconnected IS NULL AND last_heartbeat > ?", cutoff).
+		Group("node_id").
+		Scan(&onlineCounts).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to count online sessions")
+		return
+	}
+	onlineByNode := make(map[uint64]int64, len(onlineCounts))
+	for _, row := range onlineCounts {
+		onlineByNode[row.NodeID] = row.GuidCount
+	}
 	type item struct {
 		model.Node
 		GroupIDs           []uint64 `json:"groupIds"`
 		WhitelistGUIDCount int64    `json:"whitelistGuidCount"`
+		OnlineGUIDCount    int64    `json:"onlineGuidCount"`
 		ConfigReady        bool     `json:"configReady"`
 	}
 	result := make([]item, 0, len(nodes))
@@ -1068,7 +1088,8 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
 		whitelistDevicesQuery(s.db, node.ID).Distinct("devices.guid").Count(&count)
 		result = append(result, item{
 			Node: node, GroupIDs: groupIDs, WhitelistGUIDCount: count,
-			ConfigReady: nodeConfigReady(node.ConfigJSON),
+			OnlineGUIDCount: onlineByNode[node.ID],
+			ConfigReady:     nodeConfigReady(node.ConfigJSON),
 		})
 	}
 	writeJSON(w, http.StatusOK, result)

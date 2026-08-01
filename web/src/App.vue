@@ -975,7 +975,9 @@ onUnmounted(() => {
                 <small class="table-sub">{{ row.accessMode === 'blacklist' ? '其他 GUID 均可运行' : `允许 ${row.whitelistGuidCount} 个组内 GUID` }}</small>
               </template>
             </el-table-column>
-            <el-table-column prop="policyRevision" label="策略版本" width="110" />
+            <el-table-column label="在线人数" width="100" align="center">
+              <template #default="{ row }"><b>{{ row.onlineGuidCount ?? 0 }}</b></template>
+            </el-table-column>
             <el-table-column label="在线情况" min-width="190">
               <template #default="{ row }">
                 <div class="node-presence">
