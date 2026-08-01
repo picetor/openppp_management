@@ -1004,7 +1004,7 @@ onUnmounted(() => {
         </div>
         <div class="table-panel">
           <el-table :data="rules">
-            <el-table-column prop="guid" label="GUID" min-width="310"><template #default="{ row }"><code>{{ row.guid }}</code></template></el-table-column>
+            <el-table-column prop="guid" label="GUID" min-width="270"><template #default="{ row }"><code>{{ row.guid }}</code></template></el-table-column>
             <el-table-column label="效果" width="100"><template #default="{ row }"><el-tag :type="row.effect === 'deny' ? 'danger' : 'success'">{{ row.effect === 'deny' ? '拒绝' : '允许' }}</el-tag></template></el-table-column>
             <el-table-column prop="reason" label="原因" min-width="180" />
             <el-table-column label="" width="90"><template #default="{ row }"><el-button v-if="isAdmin" text type="danger" @click="removeRule(row)">删除</el-button></template></el-table-column>
@@ -1032,8 +1032,8 @@ onUnmounted(() => {
             <el-table-column prop="guid" label="GUID" min-width="310"><template #default="{ row }"><code>{{ row.guid }}</code></template></el-table-column>
             <el-table-column label="节点" min-width="150"><template #default="{ row }">{{ nodeNames.get(row.nodeId) || `节点 ${row.nodeId}` }}</template></el-table-column>
             <el-table-column v-if="isAdmin" label="归属" min-width="110"><template #default="{ row }">{{ row.ownerName || '未知' }}</template></el-table-column>
-            <el-table-column prop="remoteIp" label="来源 IP" min-width="150" />
-            <el-table-column label="流量" min-width="150"><template #default="{ row }">↓ {{ formatBytes(row.rxBytes) }} · ↑ {{ formatBytes(row.txBytes) }}</template></el-table-column>
+            <el-table-column prop="remoteIp" label="来源 IP" min-width="220" />
+            <el-table-column label="流量" min-width="220"><template #default="{ row }">↓ {{ formatBytes(row.rxBytes) }} · ↑ {{ formatBytes(row.txBytes) }}</template></el-table-column>
             <el-table-column label="最后心跳" min-width="180"><template #default="{ row }">{{ formatTime(row.lastHeartbeat) }}</template></el-table-column>
             <el-table-column label="状态" width="120">
               <template #default="{ row }">

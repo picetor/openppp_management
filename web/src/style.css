@@ -89,10 +89,10 @@ code { font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
 .batch-bar span { color: var(--muted); }
 .card-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
 .device-card, .add-card { background: white; border: 1px solid var(--line); border-radius: 15px; padding: 22px; min-height: 260px; }
-.device-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.device-head > div { display: flex; align-items: center; gap: 12px; }
+.device-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.device-head > div { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .device-head .device-tags { display: flex; align-items: center; gap: 8px; }
-.device-head h3 { margin: 0; }
+.device-head h3 { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .device-ban-note { display: flex; align-items: center; gap: 8px; margin: 14px 0; color: #d9475a; font-size: 12px; }
 .traffic-cell { display: flex; align-items: center; gap: 6px; color: var(--text); }
 .traffic-cell.over { color: #d9475a; font-weight: 600; }
