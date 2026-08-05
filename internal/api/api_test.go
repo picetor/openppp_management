@@ -149,8 +149,10 @@ func TestSubscriptionAndNodePolicyFlow(t *testing.T) {
 	handler.ServeHTTP(configDownload, httptest.NewRequest(http.MethodGet,
 		"/sub/v1/"+deviceResult.SubscriptionToken+"/nodes/"+nodeResult.Key+"/config", nil))
 	if configDownload.Code != http.StatusOK ||
-		!strings.Contains(configDownload.Header().Get("Content-Disposition"), "appsettings.json") {
-		t.Fatalf("node configuration download failed: %d %q", configDownload.Code, configDownload.Body.String())
+		!strings.Contains(configDownload.Header().Get("Content-Disposition"), "Hong_Kong_01.json") {
+		t.Fatalf("node configuration download failed: %d header=%q %q",
+			configDownload.Code, configDownload.Header().Get("Content-Disposition"),
+			configDownload.Body.String())
 	}
 
 	policyRequest := httptest.NewRequest(http.MethodGet, "/api/v1/node/policy", nil)
@@ -172,11 +174,25 @@ func TestSubscriptionAndNodePolicyFlow(t *testing.T) {
   "z-last": 1,
   "client": {
     "server": "ppp://uploaded.example.com:20000/",
-    "guid": "old-guid"
+    "guid": "old-guid",
+    "mappings": [
+      {"local-port": 8080}
+    ],
+    "peer-route-announce": ["10.0.0.0/24"],
+    "peer-gateway-forward": true,
+    "peer-local-bridge": false,
+    "routing": {
+      "ip": {"peer-routes": []}
+    },
+    "routes": []
   },
   "server": {
     "management": {"communication-key": "must-not-be-published"},
     "backend-key": "must-not-be-published",
+    "peer-routing": {
+      "enabled": true,
+      "allowed-routes": []
+    },
     "log": "/dev/null"
   },
   "a-first": 2
@@ -209,6 +225,19 @@ func TestSubscriptionAndNodePolicyFlow(t *testing.T) {
 	if strings.Contains(nodeResult.ConfigJSON, "must-not-be-published") ||
 		!strings.Contains(nodeResult.ConfigJSON, "uploaded.example.com") {
 		t.Fatalf("uploaded node configuration was not sanitized: %s", nodeResult.ConfigJSON)
+	}
+	for _, stripped := range []string{
+		`"mappings"`, `"peer-route-announce"`, `"peer-gateway-forward"`,
+		`"peer-local-bridge"`, `"routing"`, `"routes"`,
+	} {
+		if strings.Contains(nodeResult.ConfigJSON, stripped) {
+			t.Fatalf("client-local field %s was not stripped from uploaded configuration: %s",
+				stripped, nodeResult.ConfigJSON)
+		}
+	}
+	if strings.Contains(nodeResult.ConfigJSON, `"peer-routing"`) {
+		t.Fatalf("server.peer-routing was not stripped from uploaded configuration: %s",
+			nodeResult.ConfigJSON)
 	}
 	if !(strings.Index(nodeResult.ConfigJSON, `"z-last"`) <
 		strings.Index(nodeResult.ConfigJSON, `"client"`) &&
@@ -245,7 +274,7 @@ func TestSubscriptionAndNodePolicyFlow(t *testing.T) {
 		"/sub/v1/"+deviceResult.SubscriptionToken+"/scripts/install.ps1", nil))
 	if powerShellScript.Code != http.StatusOK ||
 		!strings.Contains(powerShellScript.Body.String(), "--server-dir=") ||
-		!strings.Contains(powerShellScript.Body.String(), "hk01.json") {
+		!strings.Contains(powerShellScript.Body.String(), "Hong_Kong_01.json") {
 		t.Fatalf("unexpected PowerShell subscription script: %d %s",
 			powerShellScript.Code, powerShellScript.Body.String())
 	}
@@ -254,7 +283,7 @@ func TestSubscriptionAndNodePolicyFlow(t *testing.T) {
 		"/sub/v1/"+deviceResult.SubscriptionToken+"/scripts/install.sh", nil))
 	if shellScript.Code != http.StatusOK ||
 		!strings.Contains(shellScript.Body.String(), "--server-dir=") ||
-		!strings.Contains(shellScript.Body.String(), "hk01.json") {
+		!strings.Contains(shellScript.Body.String(), "Hong_Kong_01.json") {
 		t.Fatalf("unexpected shell subscription script: %d %s",
 			shellScript.Code, shellScript.Body.String())
 	}

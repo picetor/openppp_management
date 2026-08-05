@@ -1982,10 +1982,14 @@ func injectGUID(raw, guid string) (map[string]any, error) {
 		client = map[string]any{}
 	}
 	client["guid"] = guid
+	for _, field := range clientLocalFields {
+		delete(client, field)
+	}
 	value["client"] = client
 	if server, ok := value["server"].(map[string]any); ok {
 		delete(server, "management")
 		delete(server, "backend-key")
+		delete(server, "peer-routing")
 	}
 	return value, nil
 }
@@ -2037,6 +2041,20 @@ func injectGUIDRaw(raw, guid string) ([]byte, error) {
 	return updated, nil
 }
 
+// clientLocalFields are fields that belong to the client's local runtime
+// configuration and must never be published by the management panel.  They
+// are customized per endpoint (static mappings, peer routing, route sources)
+// and a full-document subscription update would otherwise overwrite the
+// client's local edits with the panel's copy.
+var clientLocalFields = []string{
+	"mappings",
+	"peer-route-announce",
+	"peer-gateway-forward",
+	"peer-local-bridge",
+	"routing",
+	"routes",
+}
+
 func sanitizeConfigurationRaw(raw []byte) ([]byte, error) {
 	if !json.Valid(raw) {
 		return nil, errors.New("invalid configuration JSON")
@@ -2045,23 +2063,121 @@ func sanitizeConfigurationRaw(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &root); err != nil {
 		return nil, err
 	}
-	server, ok := root["server"]
-	if !ok {
-		return append([]byte(nil), raw...), nil
+	updated := append([]byte(nil), raw...)
+	if server, ok := root["server"]; ok {
+		sanitizedServer, _, err := replaceDirectObjectValue(server, "management", []byte("{}"))
+		if err != nil {
+			return nil, err
+		}
+		sanitizedServer, _, err = replaceDirectObjectValue(sanitizedServer, "backend-key", []byte(`""`))
+		if err != nil {
+			return nil, err
+		}
+		// server.peer-routing is a server-side management concern; strip it so
+		// clients never receive or get overwritten by it.
+		sanitizedServer, _, err = removeDirectObjectValue(sanitizedServer, "peer-routing")
+		if err != nil {
+			return nil, err
+		}
+		replacedServer, replaced, err := replaceDirectObjectValue(updated, "server", sanitizedServer)
+		if err != nil || !replaced {
+			return nil, errors.New("unable to sanitize server configuration")
+		}
+		updated = replacedServer
 	}
-	sanitizedServer, _, err := replaceDirectObjectValue(server, "management", []byte("{}"))
-	if err != nil {
-		return nil, err
-	}
-	sanitizedServer, _, err = replaceDirectObjectValue(sanitizedServer, "backend-key", []byte(`""`))
-	if err != nil {
-		return nil, err
-	}
-	updated, replaced, err := replaceDirectObjectValue(raw, "server", sanitizedServer)
-	if err != nil || !replaced {
-		return nil, errors.New("unable to sanitize server configuration")
+	if client, ok := root["client"]; ok {
+		sanitizedClient := client
+		for _, field := range clientLocalFields {
+			removed, _, err := removeDirectObjectValue(sanitizedClient, field)
+			if err != nil {
+				return nil, err
+			}
+			sanitizedClient = removed
+		}
+		replacedClient, replaced, err := replaceDirectObjectValue(updated, "client", sanitizedClient)
+		if err != nil || !replaced {
+			return nil, errors.New("unable to sanitize client configuration")
+		}
+		updated = replacedClient
 	}
 	return updated, nil
+}
+
+// removeDirectObjectValue removes a single JSON object property from object,
+// preserving the formatting (indentation, line breaks) and the relative order
+// of the remaining properties.  The surrounding comma and line are adjusted so
+// the result stays valid JSON and stays visually consistent.
+func removeDirectObjectValue(object []byte, key string) ([]byte, bool, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(object, &fields); err != nil {
+		return nil, false, err
+	}
+	rawValue, ok := fields[key]
+	if !ok {
+		return append([]byte(nil), object...), false, nil
+	}
+	pattern := regexp.MustCompile(regexp.QuoteMeta(strconv.Quote(key)) + `[ \t\r\n]*:`)
+	keyStart, valueStart := -1, -1
+	for _, match := range pattern.FindAllIndex(object, -1) {
+		candidate := match[1]
+		for candidate < len(object) && strings.ContainsRune(" \t\r\n", rune(object[candidate])) {
+			candidate++
+		}
+		if bytes.HasPrefix(object[candidate:], rawValue) {
+			keyStart = match[0]
+			valueStart = candidate
+			break
+		}
+	}
+	if keyStart < 0 || valueStart < 0 {
+		return nil, false, errors.New("JSON property value location not found")
+	}
+	valueEnd := valueStart + len(rawValue)
+
+	// Find the line start so the whole "key: value" line is removed, keeping
+	// the remaining document's indentation intact.
+	lineStart := keyStart
+	for lineStart > 0 && object[lineStart-1] != '\n' {
+		lineStart--
+	}
+	// Scan past the value; if a comma follows (this property is not the last
+	// one), consume it together with the trailing whitespace up to the line end.
+	lineEnd := valueEnd
+	hadComma := false
+	for lineEnd < len(object) && (object[lineEnd] == ' ' || object[lineEnd] == '\t' || object[lineEnd] == '\r') {
+		lineEnd++
+	}
+	if lineEnd < len(object) && object[lineEnd] == ',' {
+		hadComma = true
+		lineEnd++
+		for lineEnd < len(object) && (object[lineEnd] == ' ' || object[lineEnd] == '\t' || object[lineEnd] == '\r') {
+			lineEnd++
+		}
+	}
+	// Remove through the end of the line (the newline) unless we are at EOF.
+	if lineEnd < len(object) && object[lineEnd] == '\n' {
+		lineEnd++
+	}
+	result := make([]byte, 0, len(object)-(lineEnd-lineStart))
+	result = append(result, object[:lineStart]...)
+	result = append(result, object[lineEnd:]...)
+	if !hadComma {
+		// The removed property was the last one in the object, so the comma
+		// left behind by the previous property (if any) must go as well.  The
+		// comma sits at the end of the previous line, so walk back across the
+		// line break and its indentation to find it.
+		cut := lineStart
+		for cut > 0 && strings.ContainsRune(" \t\r\n", rune(result[cut-1])) {
+			cut--
+		}
+		if cut > 0 && result[cut-1] == ',' {
+			cleaned := make([]byte, 0, len(result)-1)
+			cleaned = append(cleaned, result[:cut-1]...)
+			cleaned = append(cleaned, result[cut:]...)
+			result = cleaned
+		}
+	}
+	return result, true, nil
 }
 
 func replaceDirectObjectValue(object []byte, key string, replacement []byte) ([]byte, bool, error) {
