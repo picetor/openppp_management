@@ -1989,7 +1989,6 @@ func injectGUID(raw, guid string) (map[string]any, error) {
 	if server, ok := value["server"].(map[string]any); ok {
 		delete(server, "management")
 		delete(server, "backend-key")
-		delete(server, "peer-routing")
 	}
 	return value, nil
 }
@@ -2043,14 +2042,11 @@ func injectGUIDRaw(raw, guid string) ([]byte, error) {
 
 // clientLocalFields are fields that belong to the client's local runtime
 // configuration and must never be published by the management panel.  They
-// are customized per endpoint (static mappings, peer routing, route sources)
-// and a full-document subscription update would otherwise overwrite the
-// client's local edits with the panel's copy.
+// are customized per endpoint (static mappings, route sources) and a
+// full-document subscription update would otherwise overwrite the client's
+// local edits with the panel's copy.
 var clientLocalFields = []string{
 	"mappings",
-	"peer-route-announce",
-	"peer-gateway-forward",
-	"peer-local-bridge",
 	"routing",
 	"routes",
 }
@@ -2070,12 +2066,6 @@ func sanitizeConfigurationRaw(raw []byte) ([]byte, error) {
 			return nil, err
 		}
 		sanitizedServer, _, err = replaceDirectObjectValue(sanitizedServer, "backend-key", []byte(`""`))
-		if err != nil {
-			return nil, err
-		}
-		// server.peer-routing is a server-side management concern; strip it so
-		// clients never receive or get overwritten by it.
-		sanitizedServer, _, err = removeDirectObjectValue(sanitizedServer, "peer-routing")
 		if err != nil {
 			return nil, err
 		}

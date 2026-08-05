@@ -178,21 +178,14 @@ func TestSubscriptionAndNodePolicyFlow(t *testing.T) {
     "mappings": [
       {"local-port": 8080}
     ],
-    "peer-route-announce": ["10.0.0.0/24"],
-    "peer-gateway-forward": true,
-    "peer-local-bridge": false,
     "routing": {
-      "ip": {"peer-routes": []}
+      "ip": {}
     },
     "routes": []
   },
   "server": {
     "management": {"communication-key": "must-not-be-published"},
     "backend-key": "must-not-be-published",
-    "peer-routing": {
-      "enabled": true,
-      "allowed-routes": []
-    },
     "log": "/dev/null"
   },
   "a-first": 2
@@ -227,17 +220,12 @@ func TestSubscriptionAndNodePolicyFlow(t *testing.T) {
 		t.Fatalf("uploaded node configuration was not sanitized: %s", nodeResult.ConfigJSON)
 	}
 	for _, stripped := range []string{
-		`"mappings"`, `"peer-route-announce"`, `"peer-gateway-forward"`,
-		`"peer-local-bridge"`, `"routing"`, `"routes"`,
+		`"mappings"`, `"routing"`, `"routes"`,
 	} {
 		if strings.Contains(nodeResult.ConfigJSON, stripped) {
 			t.Fatalf("client-local field %s was not stripped from uploaded configuration: %s",
 				stripped, nodeResult.ConfigJSON)
 		}
-	}
-	if strings.Contains(nodeResult.ConfigJSON, `"peer-routing"`) {
-		t.Fatalf("server.peer-routing was not stripped from uploaded configuration: %s",
-			nodeResult.ConfigJSON)
 	}
 	if !(strings.Index(nodeResult.ConfigJSON, `"z-last"`) <
 		strings.Index(nodeResult.ConfigJSON, `"client"`) &&
